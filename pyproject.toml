@@ -1,0 +1,26 @@
+[project]
+name = "nonebot-adapter-vocechat"
+version = "0.0.4"
+description = "一个 nonebot 的 Vocechat 适配器"
+authors = [
+    {name = "5656565566", email = "2393963330@qq.com"},
+]
+license = {text = "MIT"}
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "nonebot2[fastapi,httpx]>=2.4.2,<3.0.0"
+]
+dynamic = []
+
+[project.urls]
+homepage = "https://github.com/5656565566/nonebot-adapter-vocechat"
+repository = "https://github.com/5656565566/nonebot-adapter-vocechat"
+
+[tool.pdm.build]
+includes = ["nonebot",]
+package-dir = "."
+
+[build-system]
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"

@@ -1,3 +1,6 @@
 __pycache__
 .venv
 poetry.lock
+dist
+.pdm-build
+.pdm-python
