@@ -3,6 +3,7 @@ from typing import List
 
 class BotConfig(BaseModel):
     name: str
+    user_id: str
     server: str
     api_key: str
 

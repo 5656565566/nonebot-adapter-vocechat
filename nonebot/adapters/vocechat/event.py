@@ -61,7 +61,7 @@ class MessageEvent(Event):
     mid: int
     target: Target
     self_uid: str  # 机器人自身用户ID，由适配器注入
-    
+
     @override
     def get_type(self) -> str:
         return "message"
@@ -79,19 +79,20 @@ class MessageEvent(Event):
         if self.target.gid:
             return f"gid_{self.target.gid}_uid_{self.from_uid}"
         elif self.target.uid:
-            return f"uid_{self.target.uid}_{self.from_uid}"
+            return f"uid_{self.from_uid}"
         return str(self.from_uid)
     
     @override
     def is_tome(self) -> bool:
+
         # 私聊消息直接判断目标是否是机器人
-        if self.target.uid and self.target.uid == self.self_uid:
+        if self.target.uid and self.target.uid == int(self.self_uid):
             return True
         
         # 群聊消息检查是否 @机器人
-        if hasattr(self, "detail") and getattr(self.detail, "properties", None):
+        if hasattr(self, "detail") and getattr(self.detail, "properties", None):  # type: ignore
             mentions = self.detail.properties.get("mentions", [])  # type: ignore
-            if mentions and self.self_uid in mentions:
+            if mentions and int(self.self_uid) in mentions:
                 return True
         
         return False

@@ -3,6 +3,7 @@ from typing_extensions import override
 
 from nonebot.adapters import Bot as BaseBot
 from nonebot.drivers import URL, Response
+from nonebot.message import handle_event
 
 import mimetypes
 import inspect
@@ -27,6 +28,7 @@ class Bot(BaseBot):
         self.adapter: "Adapter" = adapter
         self.self_id: str = self_id
 
+        self.user_id: str = kwargs.get("user_id", "")
         self.server_base: URL = URL(kwargs.get("server_base", "http://localhost:3000"))
         self.api_key: str = kwargs.get("api_key", "")
 
@@ -59,6 +61,10 @@ class Bot(BaseBot):
             return await super().call_api(api, request= request)
         
         return await super().call_api(api, *args, **kargs)
+
+    async def handle_event(self, event: Event) -> None:
+        """处理事件"""
+        await handle_event(self, event)
 
     async def send_message(self, message: Message, event: Event, **kwargs: Any) -> Any:
         """发送消息到指定会话"""
@@ -114,7 +120,7 @@ class Bot(BaseBot):
 
                 else:
                     request = API.send_to_user(
-                        gid=target.gid, content_type=content_type, content=content, properties=properties
+                        uid=from_uid, content_type=content_type, content=content, properties=properties
                     )
                 
                 return await self.call_api("send_message", request= request)
@@ -173,8 +179,8 @@ class Bot(BaseBot):
                     if file_id:
                         break
         if isinstance(message, MessageSegment):
-            if message_segment.type == "file":
-                file_id = message_segment.data.get("file").file_id
+            if message.type == "file":
+                file_id = message.data.get("file").file_id
 
         if not file_id:
             return b""
@@ -248,16 +254,14 @@ class Bot(BaseBot):
             try:
                 # 尝试解析 JSON 响应
                 prepare_content = prepare_result.content
+                file_id= None
+
                 if isinstance(prepare_content, bytes):
                     prepare_content = prepare_content.decode('utf-8')
             
                 # 如果是纯字符串 file_id
                 if prepare_content.startswith('"') and prepare_content.endswith('"'):
                     file_id = prepare_content.strip('"')
-                else:
-                    # 尝试解析为 JSON
-                    prepare_data = json.loads(prepare_content)
-                    file_id = prepare_data.get("file_id") or prepare_data.get("id")
             
             except Exception as e:
                 log("ERROR", f"Failed to parse prepare result: {e}")
@@ -286,7 +290,7 @@ class Bot(BaseBot):
                 if isinstance(upload_content, bytes):
                     upload_content = upload_content.decode('utf-8')
             
-                # 根据日志，返回的是 JSON 格式
+                # 返回的是 JSON 格式
                 result_data = json.loads(upload_content)
             
                 # 确保有 path 字段
