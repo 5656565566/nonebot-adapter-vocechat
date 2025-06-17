@@ -3,10 +3,7 @@ from typing_extensions import override
 
 from nonebot.adapters import Message as BaseMessage
 from nonebot.adapters import MessageSegment as BaseMessageSegment
-from nonebot.drivers import URL
 from pathlib import Path
-
-import httpx
 
 from .api import ContentType
 
@@ -17,15 +14,13 @@ class File:
         path: Optional[Path] = None,
         data: Optional[bytes] = None,
         file_id: Optional[str] = None,
-        url: Optional[URL] = None,
         filename: Optional[str] = None,
     ) -> None:
-        if path is None and data is None and file_id is None and url is None:
-            raise ValueError("Either 'path' 'data' 'file_id' 'url' must be provided")
+        if path is None and data is None and file_id is None:
+            raise ValueError("Either 'path' 'data' 'file_id' must be provided")
         
         self._path = path
         self._data = data
-        self._url = url
         self.file_id = file_id
         self.filename = filename
 
@@ -35,10 +30,6 @@ class File:
         if self._path is not None:
             with open(self._path, "rb") as f:
                 return f.read()
-        if self._url is not None:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(self._url)
-                return response.content
         
         raise ValueError("No valid data source provided")
 
@@ -76,19 +67,21 @@ class MessageSegment(BaseMessageSegment["Message"]):
         return MessageSegment("markdown", {"text": md})
 
     @staticmethod
-    def file(data: Union[str, bytes, Path]= None, filename: Optional[str] = None, file_id: Optional[str] = None) -> "MessageSegment":
+    def file(
+        data: Optional[Union[str, bytes, Path]]= None,
+        filename: Optional[str] = None,
+        file_id: Optional[str] = None
+    ) -> "MessageSegment":
         """创建文件消息段"""
-        if isinstance(data, str) and (data.startswith("http://") or data.startswith("https://")):
-            data = Path(url= URL(data))
-        elif isinstance(data, str):
+        file_obj = None
+
+        if isinstance(data, str):
             data = Path(data)
         
         if isinstance(data, Path):
             file_obj = File(path=data, filename=filename or data.name)
         elif isinstance(data, bytes):
             file_obj = File(data=data, filename=filename)
-        elif isinstance(data, URL):
-            file_obj = File(url=data, filename=filename)
         elif file_id:
             file_obj = File(file_id= file_id, filename=filename)
 

@@ -2,12 +2,12 @@ from nonebot import get_plugin_config
 from nonebot.drivers import (
     Request,
     ASGIMixin,
+    HTTPClientMixin,
     HTTPServerSetup,
     URL
 )
 from nonebot.drivers import Response, Driver
 from nonebot.internal.adapter import Adapter as BaseAdapter
-from nonebot.message import handle_event
 
 from typing_extensions import override
 from typing import Any, Dict, Optional
@@ -25,7 +25,15 @@ class Adapter(BaseAdapter):
         self.adapter_config: Config = get_plugin_config(Config)
 
         for vocechat_bot in self.adapter_config.vocechat_bots:
-            self.bot_connect(Bot(adapter= self, self_id= vocechat_bot.name, api_key= vocechat_bot.api_key, server_base= vocechat_bot.server))
+            self.bot_connect(
+                Bot(
+                    adapter= self,
+                    self_id= vocechat_bot.name,
+                    user_id = vocechat_bot.user_id,
+                    api_key= vocechat_bot.api_key,
+                    server_base= vocechat_bot.server
+                    )
+                )
 
         self.setup()
 
@@ -41,6 +49,12 @@ class Adapter(BaseAdapter):
                 f"Current driver {self.config.driver} doesn't support asgi server!"
                 f"{self.get_name()} Adapter need a asgi server driver to work."
             )
+        if not isinstance(self.driver, HTTPClientMixin):
+            raise RuntimeError(
+                f"Current driver {self.config.driver} does not support http client requests! "
+                f"{self.get_name()} Adapter need a HTTPClient Driver to work."
+            )
+
         self.setup_http_server(
             HTTPServerSetup(
                 URL("/vocechat/webhook"),
@@ -118,7 +132,7 @@ class Adapter(BaseAdapter):
             event = self._parse_event(payload, bot)
 
             if event:
-                await handle_event(bot, event)
+                await bot.handle_event(event)
 
             return Response(status_code=200)
         
@@ -135,7 +149,7 @@ class Adapter(BaseAdapter):
                 "from_uid": payload.get("from_uid", 0),
                 "mid": payload.get("mid", 0),
                 "target": payload.get("target", {}),
-                "self_uid": bot.self_id,  # 注入机器人自身ID
+                "self_uid": bot.user_id,  # 注入机器人自身ID
             }
             
             # 根据事件类型创建不同的事件对象
