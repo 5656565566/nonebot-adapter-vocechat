@@ -5,11 +5,15 @@ from nonebot.utils import escape_tag
 from nonebot.compat import model_dump
 from nonebot.adapters import Event as BaseEvent
 from pydantic import BaseModel, Field
+from datetime import datetime
 
 from .message import Message, MessageSegment
 from .api import ContentType
 
 class Event(BaseEvent):
+
+    time: Optional[datetime] = None
+
     @override
     def get_event_name(self) -> str:
         raise ValueError("Event has no name!")
@@ -62,6 +66,13 @@ class MessageEvent(Event):
     target: Target
     self_uid: str  # 机器人自身用户ID，由适配器注入
 
+    # 兼容性字段
+    message_id: Optional[int] = None
+    to_me: Optional[bool] = None
+    message: Optional[Message] = None
+    original_message: Optional[Message] = None
+    reply: Optional[int] = None  # 适配器规范要求，实际不使用
+
     @override
     def get_type(self) -> str:
         return "message"
@@ -81,10 +92,9 @@ class MessageEvent(Event):
         elif self.target.uid:
             return f"uid_{self.from_uid}"
         return str(self.from_uid)
-    
+
     @override
     def is_tome(self) -> bool:
-
         # 私聊消息直接判断目标是否是机器人
         if self.target.uid and self.target.uid == int(self.self_uid):
             return True
@@ -96,6 +106,8 @@ class MessageEvent(Event):
                 return True
         
         return False
+    
+
 
 class MessageNewEvent(MessageEvent):
     """新消息事件"""
@@ -107,6 +119,9 @@ class MessageNewEvent(MessageEvent):
     
     @override
     def get_message(self) -> Message:
+        return self.message or self.get_detail()
+    
+    def get_detail(self) -> Message:
         # 根据消息类型创建不同的消息段
         if self.detail.content_type == "text/plain":
             return Message(MessageSegment.text(self.detail.content or ""))
@@ -128,9 +143,12 @@ class MessageEditEvent(MessageEvent):
     @override
     def get_event_name(self) -> str:
         return "message.edit"
-    
+
     @override
     def get_message(self) -> Message:
+        return self.message or self.get_detail()
+
+    def get_detail(self) -> Message:
         # 编辑后的消息内容
         content = self.detail.detail.get("content", "")  # type: ignore
         
@@ -175,6 +193,9 @@ class MessageReplyEvent(MessageEvent):
     
     @override
     def get_message(self) -> Message:
+        return self.message or self.get_detail()
+
+    def get_detail(self) -> Message:
         # 创建回复消息内容
         if self.detail.content_type == "text/plain":
             return Message(MessageSegment.text(self.detail.content or ""))

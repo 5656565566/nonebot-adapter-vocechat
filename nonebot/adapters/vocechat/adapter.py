@@ -11,8 +11,10 @@ from nonebot.internal.adapter import Adapter as BaseAdapter
 
 from typing_extensions import override
 from typing import Any, Dict, Optional
+from datetime import datetime
 
 import inspect
+import json
 
 from .bot import Bot
 from .config import Config
@@ -106,6 +108,7 @@ class Adapter(BaseAdapter):
         log("DEBUG", f"call api {api}")
         
         request = None
+        raw = data.pop("raw", False)
 
         if hasattr(API, api):
             api_method = getattr(API, api)
@@ -130,7 +133,15 @@ class Adapter(BaseAdapter):
             request.headers["x-api-key"] = bot.api_key
             request.url = URL(f"{bot.server_base}{request.url}")
 
-            return await self.request(request)
+            try:
+                response = await self.request(request)
+                if raw:
+                    return response
+                return json.loads(response.content)
+            
+            except Exception as e:
+                log("ERROR", f"Error calling API {api}: {e}")
+                raise e
 
 
     async def _handle_http(self, request: Request) -> Response:
@@ -168,13 +179,19 @@ class Adapter(BaseAdapter):
     def _parse_event(self, payload: Dict[str, Any], bot: Bot) -> Optional[Event]:
         """解析VoceChat事件"""
         try:
+
+            timestamp = payload.get("created_at", 0)
+
             # 基础事件字段
             event_data = {
-                "created_at": payload.get("created_at", 0),
+                "created_at": timestamp,
                 "from_uid": payload.get("from_uid", 0),
                 "mid": payload.get("mid", 0),
                 "target": payload.get("target", {}),
                 "self_uid": bot.user_id,  # 注入机器人自身ID
+
+                "time": datetime.fromtimestamp(timestamp / 1000) if timestamp is not None else datetime.now(),
+                "message_id": payload.get("mid", None),  # 兼容性字段
             }
             
             # 根据事件类型创建不同的事件对象

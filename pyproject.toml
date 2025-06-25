@@ -1,6 +1,6 @@
 [project]
 name = "nonebot-adapter-vocechat"
-version = "0.0.7"
+version = "0.0.8"
 description = "一个 nonebot 的 Vocechat 适配器"
 authors = [
     {name = "5656565566", email = "2393963330@qq.com"},

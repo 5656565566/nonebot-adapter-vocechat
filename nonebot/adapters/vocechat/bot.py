@@ -7,14 +7,63 @@ from nonebot.message import handle_event
 
 import mimetypes
 import json
+import re
 
-from .event import Event
+from .event import Event, MessageEvent
 from .message import Message, MessageSegment, File
 from .api import API, ContentType
 from .utils import log, get_mime_type
 
 if TYPE_CHECKING:
     from .adapter import Adapter
+
+def _check_at_me(bot: "Bot", event: MessageEvent) -> None:
+    """检查是否有 @me 的情况，并移除 @机器人ID 及后面的空格
+    
+    Args:
+        bot: Bot 对象（需包含 user_id 属性）
+        event: MessageEvent 对象
+    """
+    if not event.message:
+        return
+    
+    first_msg_seg = event.message[0]
+    if first_msg_seg.type != "text":
+        return
+
+    user_id = str(getattr(bot, "user_id", ""))
+    if not user_id:
+        return
+
+    first_text = first_msg_seg.data["text"].lstrip()
+    
+    if m := re.search(rf"^@{user_id}\s+", first_text):
+        event.to_me = True
+        first_msg_seg.data["text"] = first_text[m.end():]
+
+def _check_nickname(bot: "Bot", event: MessageEvent) -> None:
+    """检查消息开头是否存在昵称，去除并赋值 `event.to_me`。
+
+    Args:
+        bot: Bot 对象
+        event: MessageEvent 对象
+    """
+    if not event.message:
+        return
+    
+    first_msg_seg = event.message[0]
+    if first_msg_seg.type != "text":
+        return
+
+    nicknames = {re.escape(n) for n in bot.config.nickname}
+    if not nicknames:
+        return
+    
+    nickname_regex = "|".join(nicknames)
+    first_text = first_msg_seg.data["text"]
+    if m := re.search(rf"^({nickname_regex})([\s,，]*|$)", first_text, re.IGNORECASE):
+        event.to_me = True
+        first_msg_seg.data["text"] = first_text[m.end():]  # 移除昵称部分
 
 class Bot(BaseBot):
     """
@@ -33,11 +82,16 @@ class Bot(BaseBot):
 
     async def handle_event(self, event: Event) -> None:
         """处理事件"""
+        if isinstance(event, MessageEvent):
+            event.original_message = event.get_message()
+            event.message = event.get_message()
+            _check_at_me(self, event)
+            _check_nickname(self, event)
+
         await handle_event(self, event)
 
     async def send_message(self, message: Message, event: Event, **kwargs: Any) -> Any:
         """发送消息到指定会话"""
-
         reply= kwargs.get("reply", None)
 
         from_uid = getattr(event, "from_uid", None)
@@ -154,8 +208,7 @@ class Bot(BaseBot):
         if not file_id:
             return b""
 
-        request = API.download_file(file_id=file_id)
-        response = await self.call_api("download_file", request= request)
+        response = await self.call_api("download_file", file_id=file_id)
         return response.content
 
     async def upload_file(self, file: File) -> Dict[str, Any]:
@@ -213,8 +266,12 @@ class Bot(BaseBot):
             # 准备文件上传
             log("DEBUG", f"Preparing file upload: {file_name} ({len(file_data)} bytes)")
             
-            prepare_request = API.file_prepare(content_type, filename=file_name)
-            prepare_result: Response = await super().call_api(api="file_prepare", request=prepare_request)
+            prepare_result: Response = await self.call_api(
+                api="file_prepare",
+                content_type=content_type,
+                filename=file_name, 
+                raw= True
+            )
             
             # 解析准备结果
             if prepare_result.status_code != 200:
@@ -242,14 +299,14 @@ class Bot(BaseBot):
             log("DEBUG", f"File prepared with ID: {file_id}")
             
             # 上传文件数据
-            upload_request = API.file_upload(
-                file_id=file_id,
-                chunk_data=file_data,
-                chunk_is_last=True
+            upload_result: Response = await self.call_api(
+                api= "file_upload",
+                file_id= file_id,
+                chunk_data= file_data,
+                chunk_is_last= True,
+                raw= True
             )
-            
-            upload_result: Response = await super().call_api(api="file_upload", request=upload_request)
-            
+
             if upload_result.status_code != 200:
                 raise RuntimeError(f"File upload failed with status {upload_result.status_code}")
             
