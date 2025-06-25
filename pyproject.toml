@@ -1,6 +1,6 @@
 [project]
 name = "nonebot-adapter-vocechat"
-version = "0.0.6"
+version = "0.0.7"
 description = "一个 nonebot 的 Vocechat 适配器"
 authors = [
     {name = "5656565566", email = "2393963330@qq.com"},
@@ -9,7 +9,7 @@ license = {text = "MIT"}
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "nonebot2[fastapi,httpx]>=2.4.2,<3.0.0"
+    "nonebot2>=2.4.2,<3.0.0"
 ]
 dynamic = []
 

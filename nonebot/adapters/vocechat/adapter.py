@@ -12,28 +12,19 @@ from nonebot.internal.adapter import Adapter as BaseAdapter
 from typing_extensions import override
 from typing import Any, Dict, Optional
 
+import inspect
+
 from .bot import Bot
 from .config import Config
 from .event import *
 from .utils import log
+from .api import API
 
 class Adapter(BaseAdapter):
     @override
     def __init__(self, driver: Driver, **kwargs: Any):
         super().__init__(driver, **kwargs)
-
         self.adapter_config: Config = get_plugin_config(Config)
-
-        for vocechat_bot in self.adapter_config.vocechat_bots:
-            self.bot_connect(
-                Bot(
-                    adapter= self,
-                    self_id= vocechat_bot.name,
-                    user_id = vocechat_bot.user_id,
-                    api_key= vocechat_bot.api_key,
-                    server_base= vocechat_bot.server
-                    )
-                )
 
         self.setup()
 
@@ -54,6 +45,20 @@ class Adapter(BaseAdapter):
                 f"Current driver {self.config.driver} does not support http client requests! "
                 f"{self.get_name()} Adapter need a HTTPClient Driver to work."
             )
+        
+
+        @self.on_ready
+        def _():
+            for vocechat_bot in self.adapter_config.vocechat_bots:
+                self.bot_connect(
+                    Bot(
+                        adapter= self,
+                        self_id= vocechat_bot.name,
+                        user_id = vocechat_bot.user_id,
+                        api_key= vocechat_bot.api_key,
+                        server_base= vocechat_bot.server
+                        )
+                    )
 
         self.setup_http_server(
             HTTPServerSetup(
@@ -99,13 +104,33 @@ class Adapter(BaseAdapter):
         """
 
         log("DEBUG", f"call api {api}")
+        
+        request = None
 
-        if _request := data.get("request", None):
+        if hasattr(API, api):
+            api_method = getattr(API, api)
+            sign = inspect.signature(api_method)
+
+            for param in sign.parameters.values():
+                if param.name == "self":
+                    continue
+
+                if param.name not in data:
+                    if param.default == inspect.Parameter.empty:
+                        log("ERROR", f"Missing required parameter: {param.name} for API {api}")
+                        data[param.name] = None
+                    else:
+                        data[param.name] = param.default
             
-            _request.headers["x-api-key"] = bot.api_key
-            _request.url = URL(f"{bot.server_base}{_request.url}")
+            request = api_method(**data)
+        else:
+            request = data.get("request", None)
 
-            return await self.request(_request)
+        if request:
+            request.headers["x-api-key"] = bot.api_key
+            request.url = URL(f"{bot.server_base}{request.url}")
+
+            return await self.request(request)
 
 
     async def _handle_http(self, request: Request) -> Response:
@@ -137,7 +162,7 @@ class Adapter(BaseAdapter):
             return Response(status_code=200)
         
         except Exception as e:
-            log("ERROR", "Error handling VoceChat webhook", Exception)
+            log("ERROR", "Error handling VoceChat webhook", e)
             return Response(status_code=500, content=str(e))
 
     def _parse_event(self, payload: Dict[str, Any], bot: Bot) -> Optional[Event]:

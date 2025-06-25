@@ -6,7 +6,6 @@ from nonebot.drivers import URL, Response
 from nonebot.message import handle_event
 
 import mimetypes
-import inspect
 import json
 
 from .event import Event
@@ -21,7 +20,7 @@ class Bot(BaseBot):
     """
     VoceChat 协议 Bot 适配。
     """
-    
+
     @override
     def __init__(self, adapter: "Adapter", self_id: str, **kwargs: Any):
         super().__init__(adapter, self_id)
@@ -31,36 +30,6 @@ class Bot(BaseBot):
         self.user_id: str = kwargs.get("user_id", "")
         self.server_base: URL = URL(kwargs.get("server_base", "http://localhost:3000"))
         self.api_key: str = kwargs.get("api_key", "")
-
-    async def call_api(self, api: str, *args: Any, **kargs: Any) -> Any:
-        """调用 API"""
-        if request := kargs.get("request", None):
-            return await super().call_api(api, request= request)
-
-        if hasattr(API, api):
-            api_method = getattr(API, api)
-            sign = inspect.signature(api_method)
-
-            args_list = list(args)
-
-            for param in sign.parameters.values():
-                if param.name == "self":
-                    continue
-
-                if param.name not in kargs:
-                    if args_list:
-                        kargs[param.name] = args_list.pop(0)
-                    else:
-                        if param.default == inspect.Parameter.empty:
-                            log("ERROR", f"Missing required parameter: {param.name} for API {api}")
-                            kargs[param.name] = None
-                        else:
-                            kargs[param.name] = param.default
-            
-            request = api_method(**kargs)
-            return await super().call_api(api, request= request)
-        
-        return await super().call_api(api, *args, **kargs)
 
     async def handle_event(self, event: Event) -> None:
         """处理事件"""

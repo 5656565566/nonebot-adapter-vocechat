@@ -12,11 +12,11 @@ from .api import ContentType
 class Event(BaseEvent):
     @override
     def get_event_name(self) -> str:
-        return ""
+        raise ValueError("Event has no name!")
 
     @override
     def get_type(self) -> str:
-        return ""
+        raise ValueError("Event has no type!")
 
     @override
     def get_event_description(self) -> str:

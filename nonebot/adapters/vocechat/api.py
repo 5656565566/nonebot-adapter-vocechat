@@ -113,7 +113,7 @@ class API:
         return request
     
     @staticmethod
-    def send_mail(data: Any):
+    def send_mail(data: Any, content: Any):
 
         if isinstance(content, Dict):
             content = json.dumps(content)
