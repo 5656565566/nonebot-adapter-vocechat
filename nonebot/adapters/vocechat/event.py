@@ -11,7 +11,6 @@ from .message import Message, MessageSegment
 from .api import ContentType
 
 class Event(BaseEvent):
-
     time: Optional[datetime] = None
 
     @override
@@ -107,6 +106,21 @@ class MessageEvent(Event):
         
         return False
     
+    @override
+    def get_event_description(self) -> str:
+        target_type = "Group" if self.target.gid else "Private"
+        target_id = self.target.gid or self.target.uid
+        if target_type == "Private":
+            return escape_tag(
+                f"Message {self.mid} from: {self.from_uid}: "
+                f"{self.get_message()}"
+            )
+        
+        return escape_tag(
+                f"Message {self.mid} from: {self.from_uid}@[群:{target_id}]: "
+                f"{self.get_message()}"
+            )
+    
 
 
 class MessageNewEvent(MessageEvent):
@@ -139,7 +153,7 @@ class MessageNewEvent(MessageEvent):
 class MessageEditEvent(MessageEvent):
     """消息编辑事件"""
     detail: ReactionDetail
-    
+
     @override
     def get_event_name(self) -> str:
         return "message.edit"
