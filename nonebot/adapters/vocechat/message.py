@@ -87,6 +87,11 @@ class MessageSegment(BaseMessageSegment["Message"]):
 
         return MessageSegment("file", {"file": file_obj})
     
+    @staticmethod
+    def mention(user_id: int) -> "MessageSegment":
+        """提及消息段"""
+        return MessageSegment("text", {"text": f"@{user_id} "})
+
     def get_content_type(self) -> str:
         """获取消息段对应的内容类型"""
         mapping = {
@@ -149,3 +154,13 @@ class Message(BaseMessage[MessageSegment]):
     def __str__(self) -> str:
         """将消息转换为纯文本表示"""
         return "".join(str(seg) for seg in self)
+    
+    def reduce(self) -> None:
+        """合并消息内连续的纯文本段。"""
+        index = 1
+        while index < len(self):
+            if self[index - 1].type == "text" and self[index].type == "text":
+                self[index - 1].data["text"] += self[index].data["text"]
+                del self[index]
+            else:
+                index += 1

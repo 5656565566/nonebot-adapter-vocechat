@@ -1,10 +1,10 @@
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Literal
 from typing_extensions import override
 
 from nonebot.utils import escape_tag
 from nonebot.compat import model_dump
 from nonebot.adapters import Event as BaseEvent
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from datetime import datetime
 
 from .message import Message, MessageSegment
@@ -50,7 +50,7 @@ class MessageDetail(BaseModel):
     content_type: ContentType = ContentType.TEXT_PLAIN
     expires_in: Optional[int] = None
     properties: Optional[Dict[str, Any]] = None
-    type: str = "normal"
+    type: Literal["reaction", "normal", "reply"] = "normal"
 
 class ReactionDetail(BaseModel):
     detail: Dict[str, Any]
@@ -70,7 +70,7 @@ class MessageEvent(Event):
     to_me: Optional[bool] = None
     message: Optional[Message] = None
     original_message: Optional[Message] = None
-    reply: Optional[int] = None  # 适配器规范要求，实际不使用
+    reply: Optional[int] = None
 
     @override
     def get_type(self) -> str:
@@ -122,7 +122,6 @@ class MessageEvent(Event):
             )
     
 
-
 class MessageNewEvent(MessageEvent):
     """新消息事件"""
     detail: MessageDetail
@@ -133,99 +132,75 @@ class MessageNewEvent(MessageEvent):
     
     @override
     def get_message(self) -> Message:
-        return self.message or self.get_detail()
+        return self.message or Message()
     
-    def get_detail(self) -> Message:
-        # 根据消息类型创建不同的消息段
+    @model_validator(mode="after")
+    def parse_message_from_detail(self) -> "MessageNewEvent":
+        """根据 detail 自动解析并填充 message 字段"""
         if self.detail.content_type == "text/plain":
-            return Message(MessageSegment.text(self.detail.content or ""))
+            self.message = Message(MessageSegment.text(self.detail.content or ""))
         elif self.detail.content_type == "text/markdown":
-            return Message(MessageSegment.markdown(self.detail.content or ""))
+            self.message = Message(MessageSegment.markdown(self.detail.content or ""))
         elif self.detail.content_type == "vocechat/file":
-            # 文件消息需要特殊处理
-            file_seg = MessageSegment.file(file_id= self.detail.content or "")
-            # 添加文件元数据
+            file_seg = MessageSegment.file(file_id=self.detail.content or "")
             if self.detail.properties:
                 file_seg.data["properties"] = self.detail.properties
-            return Message(file_seg)
-        return Message(MessageSegment.text(self.detail.content or ""))
+            self.message = Message(file_seg)
+        else:
+            self.message = Message(MessageSegment.text(self.detail.content or ""))
+        return self
 
-class MessageEditEvent(MessageEvent):
+class NoticeEvent(Event):
+    """通知事件"""
+    @override
+    def get_type(self) -> str:
+        return "notice"
+
+class MessageEditEvent(NoticeEvent):
     """消息编辑事件"""
     detail: ReactionDetail
 
     @override
     def get_event_name(self) -> str:
-        return "message.edit"
+        return "notice.message.edit"
 
     @override
     def get_message(self) -> Message:
-        return self.message or self.get_detail()
+        return self.message
 
-    def get_detail(self) -> Message:
-        # 编辑后的消息内容
+    @model_validator(mode="after")
+    def parse_message_from_detail(self) -> "MessageEditEvent":
+        """根据 detail 自动解析并填充 message 字段"""
         content = self.detail.detail.get("content", "")  # type: ignore
-        
-        # 获取消息类型，默认为文本
         content_type = self.detail.detail.get("content_type", "text/plain")  # type: ignore
-        
-        # 根据消息类型创建消息段
+        properties = self.detail.detail.get("properties")  # type: ignore
+
         if content_type == "text/plain":
-            return Message(MessageSegment.text(content))
+            self.message = Message(MessageSegment.text(content))
         elif content_type == "text/markdown":
-            return Message(MessageSegment.markdown(content))
+            self.message = Message(MessageSegment.markdown(content))
         elif content_type == "vocechat/file":
-            file_seg = MessageSegment.file(file_id= content)
-            # 添加文件元数据
-            properties = self.detail.detail.get("properties")  # type: ignore
+            file_seg = MessageSegment.file(file_id=content)
             if properties:
                 file_seg.data["properties"] = properties
-            return Message(file_seg)
-        return Message(MessageSegment.text(content))
+            self.message = Message(file_seg)
+        else:
+            self.message = Message(MessageSegment.text(content))
+        return self
 
-class MessageDeleteEvent(MessageEvent):
+
+class MessageDeleteEvent(NoticeEvent):
     """消息删除事件"""
     detail: ReactionDetail
     
     @override
     def get_event_name(self) -> str:
-        return "message.delete"
+        return "notice.message.delete"
     
     @property
     def deleted_mid(self) -> int:
         """被删除的消息ID"""
         return self.detail.mid
-
-class MessageReplyEvent(MessageEvent):
-    """消息回复事件"""
-    detail: MessageDetail = Field(..., alias="detail")
-    reply_to_mid: int
-    
-    @override
-    def get_event_name(self) -> str:
-        return "message.reply"
-    
-    @override
-    def get_message(self) -> Message:
-        return self.message or self.get_detail()
-
-    def get_detail(self) -> Message:
-        # 创建回复消息内容
-        if self.detail.content_type == "text/plain":
-            return Message(MessageSegment.text(self.detail.content or ""))
-        elif self.detail.content_type == "text/markdown":
-            return Message(MessageSegment.markdown(self.detail.content or ""))
-        elif self.detail.content_type == "vocechat/file":
-            file_seg = MessageSegment.file(file_id= self.detail.content or "")
-            if self.detail.properties:
-                file_seg.data["properties"] = self.detail.properties
-            return Message(file_seg)
-        return Message(MessageSegment.text(self.detail.content or ""))
-    
-    @property
-    def reply_message_id(self) -> int:
-        """被回复的消息ID"""
-        return self.reply_to_mid
 
 class FileMessageEvent(MessageNewEvent):
     """文件消息事件"""

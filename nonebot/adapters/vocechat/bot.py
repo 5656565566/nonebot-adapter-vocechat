@@ -9,7 +9,7 @@ import mimetypes
 import json
 import re
 
-from .event import Event, MessageEvent
+from .event import Event, MessageEvent, Target
 from .message import Message, MessageSegment, File
 from .api import API, ContentType
 from .utils import log, get_mime_type
@@ -84,37 +84,45 @@ class Bot(BaseBot):
         """处理事件"""
         if isinstance(event, MessageEvent):
             event.original_message = event.get_message()
-            event.message = event.get_message()
             _check_at_me(self, event)
             _check_nickname(self, event)
 
         await handle_event(self, event)
 
-    async def send_message(self, message: Message, event: Event, **kwargs: Any) -> Any:
-        """发送消息到指定会话"""
-        reply= kwargs.get("reply", None)
-
-        from_uid = getattr(event, "from_uid", None)
-        if not from_uid:
-            raise ValueError("Event has no from_uid")
+    async def send_message(
+        self,
+        message: Message,
+        *,
+        user_id: Optional[int] = None,
+        group_id: Optional[int] = None,
+        reply: Optional[int] = None,
+        **kwargs: Any
+    ) -> Any:
+        """发送消息到指定会话
+        user_id group_id reply 三选一
         
-        target = getattr(event, "target", None)
-        if not target:
-            raise ValueError("Event has no target")
-
+        Args:
+            message: 要发送的消息
+            user_id: 私聊的用户id
+            group_id: 群聊的群id
+            reply: 回复的消息ID
+            **kwargs: 其他参数
+        """
         content_type: Union[str, ContentType] = ContentType.TEXT_PLAIN
         content: Any = None
         properties: Any = None
+        message_id = None
+        request = None
+        message.reduce()
 
         for message_segment in message:
             if message_segment.type == "file":
                 try:
-                    file = message_segment.data.get("file")
+                    file: File = message_segment.data["file"]
                     content_type = ContentType.VOCECHAT_FILE
 
                     if file.file_id:
                         content = file.file_id
-
                     else:    
                         file_result = await self.upload_file(file)
                         content = {"path": file_result.get("path")}
@@ -123,6 +131,7 @@ class Bot(BaseBot):
                 except Exception as e:
                     log("ERROR", f"File upload failed: {e}")
                     raise RuntimeError(f"Failed to upload file: {e}") from e
+                    
             elif message_segment.type == "markdown":
                 content_type = ContentType.TEXT_MARKDOWN
                 content = message_segment.data.get("text")
@@ -133,23 +142,33 @@ class Bot(BaseBot):
             try:
                 if reply:
                     request = API.reply(
-                        mid=reply, content_type=content_type, content=content, properties=properties
-                    )
-
-                elif target.gid:
+                        mid=reply,
+                        content_type=content_type,
+                        content=content,
+                        properties=properties
+                    ) 
+                elif group_id:
                     request = API.send_to_group(
-                        gid=target.gid, content_type=content_type, content=content, properties=properties
+                        gid=group_id,
+                        content_type=content_type,
+                        content=content,
+                        properties=properties
                     )
-
-                else:
+                elif user_id:
                     request = API.send_to_user(
-                        uid=from_uid, content_type=content_type, content=content, properties=properties
+                        uid=user_id,
+                        content_type=content_type,
+                        content=content,
+                        properties=properties
                     )
                 
-                return await self.call_api("send_message", request= request)
+                if request:
+                    message_id = await self.call_api("send_message", request= request)
             except Exception as e:
                 log("ERROR", f"Failed to send message: {e}")
                 raise
+
+        return message_id
 
     @override
     async def send(
@@ -158,14 +177,21 @@ class Bot(BaseBot):
         message: Union[str, Message, MessageSegment],
         **kwargs: Any,
     ) -> Any:
-        """
-        发送消息
+        """发送消息
         
         Args:
             event: 事件对象
             message: 要发送的消息 可以是字符串、Message或MessageSegment
             **kwargs: 其他参数
         """
+        from_uid = getattr(event, "from_uid", None)
+        if not from_uid:
+            raise ValueError("Event has no from_uid")
+        
+        target = getattr(event, "target", None)
+        if not target:
+            raise ValueError("Event has no target")
+
         if isinstance(message, str):
             msg = Message(MessageSegment.text(message))
         elif isinstance(message, MessageSegment):
@@ -175,7 +201,8 @@ class Bot(BaseBot):
         
         return await self.send_message(
             message=msg,
-            event=event,
+            user_id=from_uid,
+            group_id=getattr(target, "gid", None),
             **kwargs
         )
 

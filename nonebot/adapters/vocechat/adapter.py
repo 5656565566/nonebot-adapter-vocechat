@@ -179,7 +179,6 @@ class Adapter(BaseAdapter):
     def _parse_event(self, payload: Dict[str, Any], bot: Bot) -> Optional[Event]:
         """解析VoceChat事件"""
         try:
-
             timestamp = payload.get("created_at", 0)
 
             # 基础事件字段
@@ -211,8 +210,8 @@ class Adapter(BaseAdapter):
                 # 回复消息
                 elif detail.get("type") == "reply":
                     event_data["detail"] = detail
-                    event_data["reply_to_mid"] = detail.get("mid")
-                    return MessageReplyEvent.model_validate(event_data)
+                    event_data["reply"] = detail.get("mid")
+                    return MessageNewEvent.model_validate(event_data)
             
             elif isinstance(detail, dict) and detail.get("type") == "reaction":
                 reaction_detail = detail.get("detail", {})
