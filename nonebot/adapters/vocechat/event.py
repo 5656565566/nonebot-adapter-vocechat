@@ -10,8 +10,18 @@ from datetime import datetime
 from .message import Message, MessageSegment
 from .api import ContentType
 
+class Target(BaseModel):
+    gid: Optional[int] = None
+    uid: Optional[int] = None
+
 class Event(BaseEvent):
     time: Optional[datetime] = None
+
+    created_at: int
+    from_uid: int
+    mid: int
+    target: Target
+    self_uid: str  # 机器人自身用户ID，由适配器注入
 
     @override
     def get_event_name(self) -> str:
@@ -31,19 +41,19 @@ class Event(BaseEvent):
 
     @override
     def get_user_id(self) -> str:
-        raise ValueError("Event has no context!")
-
+        return str(self.from_uid)
+    
     @override
     def get_session_id(self) -> str:
-        raise ValueError("Event has no context!")
+        if self.target.gid:
+            return f"gid_{self.target.gid}_uid_{self.from_uid}"
+        elif self.target.uid:
+            return f"uid_{self.from_uid}"
+        return str(self.from_uid)
 
     @override
     def is_tome(self) -> bool:
         return False
-
-class Target(BaseModel):
-    gid: Optional[int] = None
-    uid: Optional[int] = None
 
 class MessageDetail(BaseModel):
     content: Optional[str] = None
@@ -59,13 +69,6 @@ class ReactionDetail(BaseModel):
 
 class MessageEvent(Event):
     """消息事件基类"""
-    created_at: int
-    from_uid: int
-    mid: int
-    target: Target
-    self_uid: str  # 机器人自身用户ID，由适配器注入
-
-    # 兼容性字段
     message_id: Optional[int] = None
     to_me: Optional[bool] = None
     message: Optional[Message] = None
@@ -79,18 +82,6 @@ class MessageEvent(Event):
     @override
     def get_event_name(self) -> str:
         return "message"
-    
-    @override
-    def get_user_id(self) -> str:
-        return str(self.from_uid)
-    
-    @override
-    def get_session_id(self) -> str:
-        if self.target.gid:
-            return f"gid_{self.target.gid}_uid_{self.from_uid}"
-        elif self.target.uid:
-            return f"uid_{self.from_uid}"
-        return str(self.from_uid)
 
     @override
     def is_tome(self) -> bool:

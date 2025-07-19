@@ -104,7 +104,6 @@ class Adapter(BaseAdapter):
             api: API 名称
             data: API 数据
         """
-
         log("DEBUG", f"call api {api}")
         
         request = None
@@ -135,10 +134,24 @@ class Adapter(BaseAdapter):
 
             try:
                 response = await self.request(request)
+                
                 if raw:
                     return response
-                return json.loads(response.content)
-            
+                    
+                # 根据 Content-Type 决定如何处理响应
+                content_type = response.headers.get("content-type", "").lower()
+                
+                if "application/json" in content_type:
+                    return json.loads(response.content)
+                elif api == "download_file" or "octet-stream" in content_type:
+                    return response  # 返回二进制内容 修复下载文件也转换成 json 导致的问题
+                else:
+                    # 其他情况尝试解码为文本
+                    try:
+                        return response.content.decode("utf-8")
+                    except UnicodeDecodeError:
+                        return response.content
+                
             except Exception as e:
                 log("ERROR", f"Error calling API {api}: {e}")
                 raise e

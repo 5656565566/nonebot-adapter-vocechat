@@ -225,12 +225,13 @@ class Bot(BaseBot):
         if isinstance(message, Message):
             for message_segment in message:
                 if message_segment.type == "file":
-                    file_id = message_segment.data.get("file").file_id
+                    file_id = message_segment.data["file"].file_id
                     if file_id:
                         break
+
         if isinstance(message, MessageSegment):
             if message.type == "file":
-                file_id = message.data.get("file").file_id
+                file_id = message.data["file"].file_id
 
         if not file_id:
             return b""
