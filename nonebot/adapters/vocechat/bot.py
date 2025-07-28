@@ -9,7 +9,7 @@ import mimetypes
 import json
 import re
 
-from .event import Event, MessageEvent, Target
+from .event import Event, MessageEvent
 from .message import Message, MessageSegment, File
 from .api import API, ContentType
 from .utils import log, get_mime_type
@@ -40,6 +40,15 @@ def _check_at_me(bot: "Bot", event: MessageEvent) -> None:
     if m := re.search(rf"^@{user_id}\s+", first_text):
         event.to_me = True
         first_msg_seg.data["text"] = first_text[m.end():]
+
+    # if event.target.uid and event.target.uid == int(event.self_uid):
+    #     event.to_me = True
+        
+    # 群聊消息检查是否 @机器人
+    # if hasattr(self, "detail") and getattr(self.detail, "properties", None):  # type: ignore
+    #     mentions = self.detail.properties.get("mentions", [])  # type: ignore
+    #     if mentions and int(event.self_uid) in mentions:
+    #         event.to_me = True
 
 def _check_nickname(bot: "Bot", event: MessageEvent) -> None:
     """检查消息开头是否存在昵称，去除并赋值 `event.to_me`。

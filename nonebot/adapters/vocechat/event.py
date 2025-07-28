@@ -4,7 +4,7 @@ from typing_extensions import override
 from nonebot.utils import escape_tag
 from nonebot.compat import model_dump
 from nonebot.adapters import Event as BaseEvent
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, model_validator
 from datetime import datetime
 
 from .message import Message, MessageSegment
@@ -70,7 +70,7 @@ class ReactionDetail(BaseModel):
 class MessageEvent(Event):
     """消息事件基类"""
     message_id: Optional[int] = None
-    to_me: Optional[bool] = None
+    to_me: bool = False
     message: Optional[Message] = None
     original_message: Optional[Message] = None
     reply: Optional[int] = None
@@ -86,16 +86,7 @@ class MessageEvent(Event):
     @override
     def is_tome(self) -> bool:
         # 私聊消息直接判断目标是否是机器人
-        if self.target.uid and self.target.uid == int(self.self_uid):
-            return True
-        
-        # 群聊消息检查是否 @机器人
-        if hasattr(self, "detail") and getattr(self.detail, "properties", None):  # type: ignore
-            mentions = self.detail.properties.get("mentions", [])  # type: ignore
-            if mentions and int(self.self_uid) in mentions:
-                return True
-        
-        return False
+        return self.to_me
     
     @override
     def get_event_description(self) -> str:
