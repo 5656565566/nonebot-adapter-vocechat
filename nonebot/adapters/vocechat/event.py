@@ -62,6 +62,10 @@ class MessageDetail(BaseModel):
     properties: Optional[Dict[str, Any]] = None
     type: Literal["reaction", "normal", "reply"] = "normal"
 
+class Reply(BaseModel):
+    mid: int
+    message: Optional[Message] = None
+
 class ReactionDetail(BaseModel):
     detail: Dict[str, Any]
     mid: int
@@ -73,7 +77,7 @@ class MessageEvent(Event):
     to_me: bool = False
     message: Optional[Message] = None
     original_message: Optional[Message] = None
-    reply: Optional[int] = None
+    reply: Optional[Reply] = None
 
     @override
     def get_type(self) -> str:

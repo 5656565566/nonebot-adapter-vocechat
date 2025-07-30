@@ -19,7 +19,7 @@ import json
 from .bot import Bot
 from .config import Config
 from .event import *
-from .utils import log
+from .utils import log, MessageCache
 from .api import API
 
 class Adapter(BaseAdapter):
@@ -27,7 +27,7 @@ class Adapter(BaseAdapter):
     def __init__(self, driver: Driver, **kwargs: Any):
         super().__init__(driver, **kwargs)
         self.adapter_config: Config = get_plugin_config(Config)
-
+        self.message_cache = MessageCache(self.adapter_config.message_cache_length)
         self.setup()
 
     @classmethod
@@ -210,21 +210,33 @@ class Adapter(BaseAdapter):
             detail = payload.get("detail", {})
             
             if isinstance(detail, dict):
+                event = None
+
                 # 新消息事件
                 if detail.get("type") == "normal":
                     event_data["detail"] = detail
                     
                     # 文件消息特殊处理
                     if detail.get("content_type") == "vocechat/file":
-                        return FileMessageEvent.model_validate(event_data)
+                        event = FileMessageEvent.model_validate(event_data)
                     
-                    return MessageNewEvent.model_validate(event_data)
+                    event = MessageNewEvent.model_validate(event_data)
+
+                    self.message_cache.add(event.mid, event.message)
                 
                 # 回复消息
                 elif detail.get("type") == "reply":
                     event_data["detail"] = detail
-                    event_data["reply"] = detail.get("mid")
-                    return MessageNewEvent.model_validate(event_data)
+                    event = MessageNewEvent.model_validate(event_data)
+                    reply_id = detail.get("mid", 0)
+                    event.reply = Reply(
+                        mid= reply_id,
+                        message= self.message_cache.get(reply_id)
+                    )
+
+                    self.message_cache.add(event.mid, event.message)
+
+                return event
             
             elif isinstance(detail, dict) and detail.get("type") == "reaction":
                 reaction_detail = detail.get("detail", {})

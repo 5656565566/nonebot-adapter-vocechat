@@ -1,6 +1,74 @@
+from collections import OrderedDict
+
 from nonebot.utils import logger_wrapper
 
 log = logger_wrapper("vocechat")
+
+class MessageCache:
+    def __init__(self, max_size):
+        """
+        初始化消息缓存
+        
+        参数:
+            max_size (int): 缓存的最大容量
+        """
+        if max_size <= 0:
+            raise ValueError("缓存大小必须为正整数")
+        self.max_size = max_size
+        self.cache = OrderedDict()  # 有序字典用于维护插入顺序
+    
+    def add(self, key, value):
+        """
+        添加消息到缓存中
+        
+        参数:
+            key: 消息的键
+            value: 消息的值
+        """
+        # 如果键已存在，先删除以更新其位置
+        if key in self.cache:
+            del self.cache[key]
+        # 如果缓存已满，删除最老的消息
+        elif len(self.cache) >= self.max_size:
+            self.cache.popitem(last=False)
+        self.cache[key] = value
+    
+    def get(self, key, default=None):
+        """
+        安全获取消息
+        
+        参数:
+            key: 要获取的消息的键
+            default: 如果键不存在时返回的默认值
+            
+        返回:
+            与键关联的值，如果键不存在则返回默认值
+        """
+        return self.cache.get(key, default)
+    
+    def __contains__(self, key):
+        """检查键是否存在于缓存中"""
+        return key in self.cache
+    
+    def __len__(self):
+        """返回当前缓存中的消息数量"""
+        return len(self.cache)
+    
+    def clear(self):
+        """清空缓存"""
+        self.cache.clear()
+    
+    def items(self):
+        """返回缓存中的所有键值对"""
+        return self.cache.items()
+    
+    def keys(self):
+        """返回缓存中的所有键"""
+        return self.cache.keys()
+    
+    def values(self):
+        """返回缓存中的所有值"""
+        return self.cache.values()
 
 def get_mime_type(file_bytes: bytes):
     """通过文件的魔术数字检测文件MIME类型"""
