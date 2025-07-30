@@ -8,5 +8,5 @@ class BotConfig(BaseModel):
     api_key: str
 
 class Config(BaseModel):
-    message_cache_length: int = 100
+    vocechat_history_length: int = Field(default=100)
     vocechat_bots: List[BotConfig] = Field(default_factory=list)

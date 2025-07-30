@@ -27,7 +27,7 @@ class Adapter(BaseAdapter):
     def __init__(self, driver: Driver, **kwargs: Any):
         super().__init__(driver, **kwargs)
         self.adapter_config: Config = get_plugin_config(Config)
-        self.message_cache = MessageCache(self.adapter_config.message_cache_length)
+        self.message_cache = {}
         self.setup()
 
     @classmethod
@@ -211,6 +211,8 @@ class Adapter(BaseAdapter):
             
             if isinstance(detail, dict):
                 event = None
+                if self.message_cache.get(bot.user_id, None) == None:
+                    self.message_cache[bot.user_id] = MessageCache(self.adapter_config.vocechat_history_length)
 
                 # 新消息事件
                 if detail.get("type") == "normal":
@@ -222,7 +224,7 @@ class Adapter(BaseAdapter):
                     
                     event = MessageNewEvent.model_validate(event_data)
 
-                    self.message_cache.add(event.mid, event.message)
+                    self.message_cache[bot.user_id].add(event.mid, event.message)
                 
                 # 回复消息
                 elif detail.get("type") == "reply":
@@ -231,10 +233,10 @@ class Adapter(BaseAdapter):
                     reply_id = detail.get("mid", 0)
                     event.reply = Reply(
                         mid= reply_id,
-                        message= self.message_cache.get(reply_id)
+                        message= self.message_cache[bot.user_id].get(reply_id)
                     )
 
-                    self.message_cache.add(event.mid, event.message)
+                    self.message_cache[bot.user_id].add(event.mid, event.message)
 
                 return event
             

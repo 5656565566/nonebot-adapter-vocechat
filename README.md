@@ -11,9 +11,9 @@ _✨ vocechat webhook 协议适配 ✨_
 </div>
 
 > [!NOTE]
-> 由于时间问题，目前代码尚未完善
+> 目前处于早期阶段
 > 
-> 目前正在进行代码规范处理
+> 遇到问题可以反馈
 
 
 ## 配置
@@ -38,7 +38,10 @@ DRIVER=~httpx+~fastapi
 vocechat_bots=[
   {"name": "xxx","user_id": "2", "server": "http://vocechat.url", "api_key": ""}
 ]
+vocechat_history_length=100 # 默认值
 ```
+
+`vocechat_bots` 用于配置机器人
 
 `name` 是任意的 bot 名称会决定 webhook 地址 如 http://{nonebot_host}:{nonebot_post}/vocechat/webhook?bot={name}
 
@@ -47,6 +50,8 @@ vocechat_bots=[
 `api_key` 为 vocechat 为bot生成的 `api_key`。
 
 `user_id` 为 vocechat 生成的 bot 的 `user_id`。
+
+`vocechat_history_length` 用于配置每个机器人存储的聊天记录长度，用于为 回复 提供原消息
 
 ## 相关项目
 
