@@ -184,7 +184,7 @@ class Bot(BaseBot):
         self,
         event: Event,
         message: Union[str, Message, MessageSegment],
-        **kwargs: Any,
+        **kwargs,
     ) -> Any:
         """发送消息
         
@@ -321,10 +321,14 @@ class Bot(BaseBot):
             try:
                 # 尝试解析 JSON 响应
                 prepare_content = prepare_result.content
-                file_id= None
+                file_id = None
 
                 if isinstance(prepare_content, bytes):
-                    prepare_content = prepare_content.decode('utf-8')
+                    prepare_content = prepare_content.decode("utf-8")
+                elif prepare_content is None:
+                    prepare_content = ""
+                else:
+                    prepare_content = str(prepare_content)
 
                 # 如果是纯字符串 file_id
                 if prepare_content.startswith('"') and prepare_content.endswith('"'):
@@ -355,7 +359,11 @@ class Bot(BaseBot):
             try:
                 upload_content = upload_result.content
                 if isinstance(upload_content, bytes):
-                    upload_content = upload_content.decode('utf-8')
+                    upload_content = upload_content.decode("utf-8")
+                elif upload_content is None:
+                    upload_content = ""
+                else:
+                    upload_content = str(upload_content)
             
                 # 返回的是 JSON 格式
                 result_data = json.loads(upload_content)

@@ -10,7 +10,7 @@ from nonebot.drivers import Response, Driver
 from nonebot.internal.adapter import Adapter as BaseAdapter
 
 from typing_extensions import override
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, cast
 from datetime import datetime
 
 import inspect
@@ -139,16 +139,25 @@ class Adapter(BaseAdapter):
                 # 根据 Content-Type 决定如何处理响应
                 content_type = response.headers.get("content-type", "").lower()
                 
+                response_content = response.content
+
+                if isinstance(response_content, bytes):
+                    normalized_content = response_content
+                elif response_content is None:
+                    normalized_content = b""
+                else:
+                    normalized_content = str(response_content).encode("utf-8")
+
                 if "application/json" in content_type:
-                    return json.loads(response.content) if response.content else {}
+                    return json.loads(normalized_content) if normalized_content else {}
                 elif api == "download_file" or "octet-stream" in content_type:
                     return response  # 返回二进制内容 修复下载文件也转换成 json 导致的问题
                 else:
                     # 其他情况尝试解码为文本
                     try:
-                        return response.content.decode("utf-8")
+                        return normalized_content.decode("utf-8")
                     except UnicodeDecodeError:
-                        return response.content
+                        return normalized_content
                 
             except Exception as e:
                 log("ERROR", f"Error calling API {api}: {e}")
@@ -171,15 +180,17 @@ class Adapter(BaseAdapter):
             if not bot:
                 return Response(status_code=404, content="Not Found Bot")
 
+            vocechat_bot = cast(Bot, bot)
+
             try:
                 payload = request.json
             except ValueError:
                 return Response(status_code=400, content="Invalid JSON")
             
-            event = self._parse_event(payload, bot)
+            event = self._parse_event(payload, vocechat_bot)
 
             if event:
-                await bot.handle_event(event)
+                await vocechat_bot.handle_event(event)
 
             return Response(status_code=200)
         

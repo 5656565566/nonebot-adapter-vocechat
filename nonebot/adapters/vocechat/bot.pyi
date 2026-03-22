@@ -22,7 +22,7 @@ class Bot(BaseBot):
 
     async def handle_event(self, event: Event) -> None: ...
     async def send(
-        self, event: Event, message: str | Message | MessageSegment, reply: Optional[int], **kwargs: Any
+        self, event: Event, message: str | Message | MessageSegment, **kwargs: Any
     ) -> Any: ...
     async def download_file(
         self, file_id: str | None = None, message: Message | MessageSegment | None = None
