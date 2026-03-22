@@ -53,12 +53,10 @@ class Adapter(BaseAdapter):
         def _():
             for vocechat_bot in self.adapter_config.vocechat_bots:
                 self.bot_connect(
-                    Bot(
-                        adapter= self,
-                        self_id= vocechat_bot.name,
-                        user_id = vocechat_bot.user_id,
-                        api_key= vocechat_bot.api_key,
-                        server_base= vocechat_bot.server
+                        Bot(
+                            adapter=self,
+                            self_id=vocechat_bot.name,
+                            botConfig=vocechat_bot,
                         )
                     )
 

@@ -2,10 +2,13 @@ from typing import Any, Optional, Dict
 
 from nonebot.adapters import Bot as BaseBot
 
+from .config import BotConfig
 from .event import Event, Target
 from .message import Message, MessageSegment, File
 
 class Bot(BaseBot):
+    def __init__(self, adapter: Any, self_id: str, botConfig: BotConfig) -> None: ...
+
     async def call_api(self, api: str, **data) -> Any:
         """调用 OneBot 协议 API。
 

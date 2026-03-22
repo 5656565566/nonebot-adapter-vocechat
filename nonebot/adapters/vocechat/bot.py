@@ -12,6 +12,7 @@ import re
 from .event import Event, MessageEvent
 from .message import Message, MessageSegment, File
 from .api import API, ContentType
+from .config import BotConfig
 from .utils import log, get_mime_type
 
 if TYPE_CHECKING:
@@ -80,14 +81,12 @@ class Bot(BaseBot):
     """
 
     @override
-    def __init__(self, adapter: "Adapter", self_id: str, **kwargs: Any):
+    def __init__(self, adapter: "Adapter", self_id: str, botConfig: BotConfig):
         super().__init__(adapter, self_id)
-        self.adapter: "Adapter" = adapter
         self.self_id: str = self_id
-
-        self.user_id: str = kwargs.get("user_id", "")
-        self.server_base: URL = URL(kwargs.get("server_base", "http://localhost:3000"))
-        self.api_key: str = kwargs.get("api_key", "")
+        self.user_id: str = botConfig.user_id
+        self.server_base: URL = URL(botConfig.server)
+        self.api_key: str = botConfig.api_key
 
     async def handle_event(self, event: Event) -> None:
         """处理事件"""
