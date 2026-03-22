@@ -142,7 +142,7 @@ class Adapter(BaseAdapter):
                 content_type = response.headers.get("content-type", "").lower()
                 
                 if "application/json" in content_type:
-                    return json.loads(response.content)
+                    return json.loads(response.content) if response.content else {}
                 elif api == "download_file" or "octet-stream" in content_type:
                     return response  # 返回二进制内容 修复下载文件也转换成 json 导致的问题
                 else:
@@ -221,8 +221,8 @@ class Adapter(BaseAdapter):
                     # 文件消息特殊处理
                     if detail.get("content_type") == "vocechat/file":
                         event = FileMessageEvent.model_validate(event_data)
-                    
-                    event = MessageNewEvent.model_validate(event_data)
+                    else:
+                        event = MessageNewEvent.model_validate(event_data)
 
                     self.message_cache[bot.user_id].add(event.mid, event.message)
                 

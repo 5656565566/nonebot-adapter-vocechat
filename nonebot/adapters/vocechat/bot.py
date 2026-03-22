@@ -117,14 +117,15 @@ class Bot(BaseBot):
             reply: 回复的消息ID
             **kwargs: 其他参数
         """
-        content_type: Union[str, ContentType] = ContentType.TEXT_PLAIN
-        content: Any = None
-        properties: Any = None
         message_id = None
-        request = None
         message.reduce()
 
         for message_segment in message:
+            content_type: Union[str, ContentType] = ContentType.TEXT_PLAIN
+            content: Any = None
+            properties: Any = None
+            request = None
+
             if message_segment.type == "file":
                 try:
                     file: File = message_segment.data["file"]
@@ -234,13 +235,17 @@ class Bot(BaseBot):
         if isinstance(message, Message):
             for message_segment in message:
                 if message_segment.type == "file":
-                    file_id = message_segment.data["file"].file_id
+                    file_obj = message_segment.data.get("file")
+                    if file_obj:
+                        file_id = getattr(file_obj, "file_id", None)
                     if file_id:
                         break
 
         if isinstance(message, MessageSegment):
             if message.type == "file":
-                file_id = message.data["file"].file_id
+                file_obj = message.data.get("file")
+                if file_obj:
+                    file_id = getattr(file_obj, "file_id", None)
 
         if not file_id:
             return b""
@@ -321,7 +326,7 @@ class Bot(BaseBot):
 
                 if isinstance(prepare_content, bytes):
                     prepare_content = prepare_content.decode('utf-8')
-            
+
                 # 如果是纯字符串 file_id
                 if prepare_content.startswith('"') and prepare_content.endswith('"'):
                     file_id = prepare_content.strip('"')
