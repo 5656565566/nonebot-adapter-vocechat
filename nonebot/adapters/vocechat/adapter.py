@@ -50,7 +50,7 @@ class Adapter(BaseAdapter):
         
 
         @self.on_ready
-        def _():
+        async def _():
             for vocechat_bot in self.adapter_config.vocechat_bots:
                 self.bot_connect(
                         Bot(

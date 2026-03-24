@@ -77,7 +77,7 @@ def _check_nickname(bot: "Bot", event: MessageEvent) -> None:
 
 class Bot(BaseBot):
     """
-    VoceChat 协议 Bot 适配。
+    VoceChat 协议 Bot 适配
     """
 
     @override
