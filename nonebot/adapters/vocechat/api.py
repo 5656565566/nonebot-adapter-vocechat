@@ -113,21 +113,22 @@ class API:
         return request
     
     @staticmethod
-    def send_mail(data: Any, content: Any):
-
-        if isinstance(content, Dict):
-            content = json.dumps(content)
+    def send_mail(data: Dict[str, Any], content: Any):
+        payload = data.copy()
+        
+        if isinstance(content, dict):
+            payload["content"] = json.dumps(content)
+        else:
+            payload["content"] = str(content)
 
         request = Request(
             "POST",
             "/api/bot/send_mail",
-            headers = {
-                "Accept": "*/*",
-                "Content-Type": "application/json; charset=utf-8"
+            headers={
+                "Content-Type": "application/json"
             },
-            data= data
+            content=json.dumps(payload)
         )
-
         return request
     
     @staticmethod

@@ -21,7 +21,7 @@ class Event(BaseEvent):
     from_uid: int
     mid: int
     target: Target
-    self_uid: str  # 机器人自身用户ID，由适配器注入
+    self_uid: str  # 机器人自身用户ID 由适配器注入
 
     @override
     def get_event_name(self) -> str:
