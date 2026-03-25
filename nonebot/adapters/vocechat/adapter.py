@@ -21,6 +21,16 @@ from .config import Config
 from .event import *
 from .utils import log, MessageCache
 from .api import API
+from .exception import (
+    ActionFailed,
+    ApiNotAvailable,
+    ForbiddenException,
+    NetworkError,
+    NotFoundException,
+    RateLimitException,
+    ServerError,
+    UnauthorizedException,
+)
 
 class Adapter(BaseAdapter):
     @override
@@ -94,6 +104,32 @@ class Adapter(BaseAdapter):
             ),
         )
 
+    @staticmethod
+    def _raise_api_exception(response: Response) -> None:
+        status_code = response.status_code
+
+        if status_code == 401:
+            raise UnauthorizedException(response)
+        if status_code == 403:
+            raise ForbiddenException(response)
+        if status_code == 404:
+            raise NotFoundException(response)
+        if status_code == 429:
+            raise RateLimitException(response)
+        if status_code >= 500:
+            raise ServerError(response)
+        raise ActionFailed(response)
+
+    @staticmethod
+    def _normalize_response_content(response: Response) -> bytes:
+        response_content = response.content
+
+        if isinstance(response_content, bytes):
+            return response_content
+        if response_content is None:
+            return b""
+        return str(response_content).encode("utf-8")
+
     @override
     async def _call_api(self, bot: Bot, api: str, **data: Any) -> Any:
         """`Adapter` 实际调用 api 的逻辑实现函数，实现该方法以调用 api。
@@ -103,7 +139,7 @@ class Adapter(BaseAdapter):
             data: API 数据
         """
         log("DEBUG", f"call api {api}")
-        
+
         request = None
         raw = data.pop("raw", False)
 
@@ -121,47 +157,49 @@ class Adapter(BaseAdapter):
                         data[param.name] = None
                     else:
                         data[param.name] = param.default
-            
+
             request = api_method(**data)
         else:
             request = data.get("request", None)
 
-        if request:
-            request.headers["x-api-key"] = bot.api_key
-            request.url = URL(f"{bot.server_base}{request.url}")
+        if request is None:
+            raise ApiNotAvailable()
 
+        request.headers["x-api-key"] = bot.api_key
+        request.url = URL(f"{bot.server_base}{request.url}")
+
+        try:
+            response = await self.request(request)
+        except ApiNotAvailable:
+            raise
+        except Exception as e:
+            log("ERROR", f"Network error when calling API {api}: {e}")
+            raise NetworkError(str(e)) from e
+
+        if response.status_code >= 400:
+            log("ERROR", f"API {api} failed with status code {response.status_code}")
+            self._raise_api_exception(response)
+
+        if raw:
+            return response
+
+        content_type = response.headers.get("content-type", "").lower()
+        normalized_content = self._normalize_response_content(response)
+
+        if "application/json" in content_type:
             try:
-                response = await self.request(request)
-                
-                if raw:
-                    return response
-                    
-                # 根据 Content-Type 决定如何处理响应
-                content_type = response.headers.get("content-type", "").lower()
-                
-                response_content = response.content
+                return json.loads(normalized_content) if normalized_content else {}
+            except json.JSONDecodeError as e:
+                log("ERROR", f"Failed to decode JSON response from API {api}: {e}")
+                raise ActionFailed(response) from e
 
-                if isinstance(response_content, bytes):
-                    normalized_content = response_content
-                elif response_content is None:
-                    normalized_content = b""
-                else:
-                    normalized_content = str(response_content).encode("utf-8")
+        if api == "download_file" or "octet-stream" in content_type:
+            return response
 
-                if "application/json" in content_type:
-                    return json.loads(normalized_content) if normalized_content else {}
-                elif api == "download_file" or "octet-stream" in content_type:
-                    return response  # 返回二进制内容 修复下载文件也转换成 json 导致的问题
-                else:
-                    # 其他情况尝试解码为文本
-                    try:
-                        return normalized_content.decode("utf-8")
-                    except UnicodeDecodeError:
-                        return normalized_content
-                
-            except Exception as e:
-                log("ERROR", f"Error calling API {api}: {e}")
-                raise e
+        try:
+            return normalized_content.decode("utf-8")
+        except UnicodeDecodeError:
+            return normalized_content
 
 
     async def _handle_http(self, request: Request) -> Response:
