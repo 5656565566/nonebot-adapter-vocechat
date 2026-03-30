@@ -35,9 +35,7 @@ DRIVER=~httpx+~fastapi
 配置连接配置，如：
 
 ```dotenv
-vocechat_bots=[
-  {"name": "xxx","user_id": "2", "server": "http://vocechat.url", "api_key": ""}
-]
+vocechat_bots=[{"name": "xxx","user_id": "2", "server": "http://vocechat.url", "api_key": ""}]
 vocechat_history_length=100 # 默认值
 ```
 

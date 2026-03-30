@@ -1,26 +1,25 @@
-from nonebot import get_plugin_config
-from nonebot.drivers import (
-    Request,
-    ASGIMixin,
-    HTTPClientMixin,
-    HTTPServerSetup,
-    URL
-)
-from nonebot.drivers import Response, Driver
-from nonebot.internal.adapter import Adapter as BaseAdapter
-
-from typing_extensions import override
-from typing import Any, Dict, Optional, cast
-from datetime import datetime
-
 import inspect
 import json
+from datetime import datetime
+from typing import Any, cast
 
+from nonebot import get_plugin_config
+from nonebot.drivers import (
+    ASGIMixin,
+    Driver,
+    HTTPClientMixin,
+    HTTPServerSetup,
+    Request,
+    Response,
+    URL,
+)
+from nonebot.internal.adapter import Adapter as BaseAdapter
+from typing_extensions import override
+
+from .api import API
 from .bot import Bot
 from .config import Config
-from .event import *
-from .utils import log, MessageCache
-from .api import API
+from .event import Event, GroupMessageEvent, PrivateMessageEvent, Reply
 from .exception import (
     ActionFailed,
     ApiNotAvailable,
@@ -31,13 +30,14 @@ from .exception import (
     ServerError,
     UnauthorizedException,
 )
+from .utils import MessageCache, log
 
 class Adapter(BaseAdapter):
     @override
-    def __init__(self, driver: Driver, **kwargs: Any):
+    def __init__(self, driver: Driver, **kwargs: Any) -> None:
         super().__init__(driver, **kwargs)
         self.adapter_config: Config = get_plugin_config(Config)
-        self.message_cache = {}
+        self.message_cache: dict[str, MessageCache] = {}
         self.setup()
 
     @classmethod
@@ -60,49 +60,31 @@ class Adapter(BaseAdapter):
         
 
         @self.on_ready
-        async def _():
+        async def _() -> None:
             for vocechat_bot in self.adapter_config.vocechat_bots:
                 self.bot_connect(
-                        Bot(
-                            adapter=self,
-                            self_id=vocechat_bot.name,
-                            botConfig=vocechat_bot,
-                        )
+                    Bot(
+                        adapter=self,
+                        self_id=vocechat_bot.name or vocechat_bot.user_id,
+                        botConfig=vocechat_bot,
                     )
+                )
 
-        self.setup_http_server(
-            HTTPServerSetup(
-                URL("/vocechat/webhook"),
-                "POST",
-                f"{self.get_name()} Webhook",
-                self._handle_http,
-            ),
-        )
-        self.setup_http_server(
-            HTTPServerSetup(
-                URL("/vocechat/webhook/"),
-                "POST",
-                f"{self.get_name()} Webhook Slash",
-                self._handle_http,
-            ),
-        )
-
-        self.setup_http_server(
-            HTTPServerSetup(
-                URL("/vocechat/webhook"),
-                "GET",
-                f"{self.get_name()} Webhook",
-                self._handle_http,
-            ),
-        )
-        self.setup_http_server(
-            HTTPServerSetup(
-                URL("/vocechat/webhook/"),
-                "GET",
-                f"{self.get_name()} Webhook Slash",
-                self._handle_http,
-            ),
-        )
+        for path in (
+            "/vocechat/webhook/{name}",
+            "/vocechat/webhook/{name}/",
+            "/vocechat/{name}",
+            "/vocechat/{name}/",
+        ):
+            for method in ("GET", "POST"):
+                self.setup_http_server(
+                    HTTPServerSetup(
+                        URL(path),
+                        method,
+                        f"{self.get_name()} Webhook",
+                        self._handle_http,
+                    )
+                )
 
     @staticmethod
     def _raise_api_exception(response: Response) -> None:
@@ -132,7 +114,7 @@ class Adapter(BaseAdapter):
 
     @override
     async def _call_api(self, bot: Bot, api: str, **data: Any) -> Any:
-        """`Adapter` 实际调用 api 的逻辑实现函数，实现该方法以调用 api。
+        """`Adapter` 实际调用 api 的逻辑实现函数 实现该方法以调用 api
 
         参数:
             api: API 名称
@@ -140,8 +122,8 @@ class Adapter(BaseAdapter):
         """
         log("DEBUG", f"call api {api}")
 
-        request = None
-        raw = data.pop("raw", False)
+        request: Request | None = None
+        raw = bool(data.pop("raw", False))
 
         if hasattr(API, api):
             api_method = getattr(API, api)
@@ -154,19 +136,21 @@ class Adapter(BaseAdapter):
                 if param.name not in data:
                     if param.default == inspect.Parameter.empty:
                         log("ERROR", f"Missing required parameter: {param.name} for API {api}")
-                        data[param.name] = None
+                        raise TypeError(f"Missing required parameter: {param.name} for API {api}")
                     else:
                         data[param.name] = param.default
 
             request = api_method(**data)
         else:
-            request = data.get("request", None)
+            request = cast(Request | None, data.get("request"))
 
         if request is None:
             raise ApiNotAvailable()
 
-        request.headers["x-api-key"] = bot.api_key
-        request.url = URL(f"{bot.server_base}{request.url}")
+        request.headers["x-api-key"] = str(bot.api_key)
+        server_base = str(bot.server_base).rstrip("/")
+        request_path = str(request.url)
+        request.url = URL(f"{server_base}{request_path}")
 
         try:
             response = await self.request(request)
@@ -177,6 +161,13 @@ class Adapter(BaseAdapter):
             raise NetworkError(str(e)) from e
 
         if response.status_code >= 400:
+            log(
+                "DEBUG",
+                "VoceChat request failed: "
+                f"api={api}, method={request.method}, url={request.url}, "
+                f"status={response.status_code}, "
+                f"response={self._normalize_response_content(response)!r}",
+            )
             log("ERROR", f"API {api} failed with status code {response.status_code}")
             self._raise_api_exception(response)
 
@@ -203,17 +194,14 @@ class Adapter(BaseAdapter):
 
 
     async def _handle_http(self, request: Request) -> Response:
-        """处理VoceChat Webhook请求"""
-        try:
-            bot_name = request.url.query.get("bot")
-            
-            if not bot_name:
-                return Response(status_code=404, content="Not Found")
+        """处理 VoceChat webhook 请求"""
+        if request.method == "GET":
+            return Response(status_code=200)
 
-            if request.method == "GET": # 添加机器人需要验证
-                return Response(status_code=200)
-            
-            bot = self.bots.get(bot_name)
+        try:
+            path_parts = request.url.path.strip("/").split("/")
+            name = path_parts[-1]
+            bot = self.bots.get(name)
 
             if not bot:
                 return Response(status_code=404, content="Not Found Bot")
@@ -221,88 +209,76 @@ class Adapter(BaseAdapter):
             vocechat_bot = cast(Bot, bot)
 
             try:
-                payload = request.json
-            except ValueError:
+                raw_content = request.content
+                if isinstance(raw_content, bytes):
+                    payload = json.loads(raw_content.decode("utf-8")) if raw_content else {}
+                elif isinstance(raw_content, str):
+                    payload = json.loads(raw_content) if raw_content else {}
+                else:
+                    payload = {}
+            except (UnicodeDecodeError, json.JSONDecodeError, TypeError):
                 return Response(status_code=400, content="Invalid JSON")
-            
+
             event = self._parse_event(payload, vocechat_bot)
 
             if event:
                 await vocechat_bot.handle_event(event)
 
             return Response(status_code=200)
-        
+
         except Exception as e:
             log("ERROR", "Error handling VoceChat webhook", e)
             return Response(status_code=500, content=str(e))
 
-    def _parse_event(self, payload: Dict[str, Any], bot: Bot) -> Optional[Event]:
-        """解析VoceChat事件"""
+    def _parse_event(self, payload: dict[str, Any], bot: Bot) -> Event | None:
+        """解析 VoceChat 事件"""
         try:
             timestamp = payload.get("created_at", 0)
 
-            # 基础事件字段
             event_data = {
                 "created_at": timestamp,
                 "from_uid": payload.get("from_uid", 0),
                 "mid": payload.get("mid", 0),
                 "target": payload.get("target", {}),
-                "self_uid": bot.user_id,  # 注入机器人自身ID
-
+                "self_uid": bot.user_id,
                 "time": datetime.fromtimestamp(timestamp / 1000) if timestamp is not None else datetime.now(),
-                "message_id": payload.get("mid", None),  # 兼容性字段
+                "message_id": payload.get("mid"),
             }
-            
-            # 根据事件类型创建不同的事件对象
+
             detail = payload.get("detail", {})
-            
+
             if isinstance(detail, dict):
                 event = None
-                if self.message_cache.get(bot.user_id, None) == None:
-                    self.message_cache[bot.user_id] = MessageCache(self.adapter_config.vocechat_history_length)
+                bot_self_id = bot.self_id
+                if self.message_cache.get(bot_self_id) is None:
+                    self.message_cache[bot_self_id] = MessageCache(self.adapter_config.vocechat_history_length)
 
-                # 新消息事件
-                if detail.get("type") == "normal":
+                detail_type = detail.get("type")
+
+                is_group = payload.get("target", {}).get("gid") is not None
+
+                if detail_type in ("normal", "reply"):
                     event_data["detail"] = detail
-                    
-                    # 文件消息特殊处理
-                    if detail.get("content_type") == "vocechat/file":
-                        event = FileMessageEvent.model_validate(event_data)
+
+                    if is_group:
+                        event = GroupMessageEvent.model_validate(event_data)
                     else:
-                        event = MessageNewEvent.model_validate(event_data)
+                        event = PrivateMessageEvent.model_validate(event_data)
 
-                    self.message_cache[bot.user_id].add(event.mid, event.message)
-                
-                # 回复消息
-                elif detail.get("type") == "reply":
-                    event_data["detail"] = detail
-                    event = MessageNewEvent.model_validate(event_data)
-                    reply_id = detail.get("mid", 0)
-                    event.reply = Reply(
-                        mid= reply_id,
-                        message= self.message_cache[bot.user_id].get(reply_id)
-                    )
+                    if detail_type == "reply":
+                        reply_id = detail.get("mid", 0)
+                        event.reply = Reply(
+                            mid=reply_id,
+                            message=self.message_cache[bot_self_id].get(reply_id)
+                        )
 
-                    self.message_cache[bot.user_id].add(event.mid, event.message)
+                    self.message_cache[bot_self_id].add(event.mid, event.message)
 
-                return event
-            
-            elif isinstance(detail, dict) and detail.get("type") == "reaction":
-                reaction_detail = detail.get("detail", {})
-                
-                # 编辑消息
-                if reaction_detail.get("type") == "edit":
-                    event_data["detail"] = detail
-                    return MessageEditEvent.model_validate(event_data)
-                
-                # 删除消息
-                elif reaction_detail.get("type") == "delete":
-                    event_data["detail"] = detail
-                    return MessageDeleteEvent.model_validate(event_data)
-            
+                    return event
+
             log("WARNING", f"Unknown event type: {payload}")
             return None
-            
+
         except Exception as e:
             log("ERROR", "Error parsing VoceChat event", e)
             return None

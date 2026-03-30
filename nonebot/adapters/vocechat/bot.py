@@ -1,58 +1,64 @@
-from typing import TYPE_CHECKING, Any, Union, Optional, Dict
-from typing_extensions import override
+import json
+import mimetypes
+import re
+from typing import TYPE_CHECKING, Any
 
 from nonebot.adapters import Bot as BaseBot
-from nonebot.drivers import URL, Response
+from nonebot.drivers import Response, URL
 from nonebot.message import handle_event
+from typing_extensions import override
 
-import mimetypes
-import json
-import re
-
-from .event import Event, MessageEvent
-from .message import Message, MessageSegment, File
 from .api import API, ContentType
 from .config import BotConfig
-from .utils import log, get_mime_type
+from .event import Event, MessageEvent
+from .message import File, Message, MessageSegment
+from .utils import get_mime_type, log
 
 if TYPE_CHECKING:
     from .adapter import Adapter
 
-def _check_at_me(bot: "Bot", event: MessageEvent) -> None:
-    """检查是否有 @me 的情况，并移除 @机器人ID 及后面的空格
-    
-    Args:
-        bot: Bot 对象（需包含 user_id 属性）
-        event: MessageEvent 对象
-    """
-    if not event.message:
+def _check_reply(bot: "Bot", event: MessageEvent) -> None:
+    if event.reply is None:
         return
-    
-    first_msg_seg = event.message[0]
-    if first_msg_seg.type != "text":
+
+    # 需通过后续的回复缓存功能新增 才能完美实现
+
+
+def _check_at_me(bot: "Bot", event: MessageEvent) -> None:
+    """检查消息首尾是否 @ 机器人 并移除对应文本"""
+    if not event.message:
         return
 
     user_id = str(getattr(bot, "user_id", ""))
     if not user_id:
         return
 
-    first_text = first_msg_seg.data["text"].lstrip()
-    
-    if m := re.search(rf"^@{user_id}\s+", first_text):
-        event.to_me = True
-        first_msg_seg.data["text"] = first_text[m.end():]
+    first_msg_seg = event.message[0]
+    if first_msg_seg.type == "text":
+        first_text = first_msg_seg.data["text"].lstrip()
+        if match := re.match(rf"^@{user_id}(?:\s+|$)", first_text):
+            event.to_me = True
+            first_msg_seg.data["text"] = first_text[match.end():]
+            if not first_msg_seg.data["text"]:
+                del event.message[0]
 
-    # if event.target.uid and event.target.uid == int(event.self_uid):
-    #     event.to_me = True
-        
-    # 群聊消息检查是否 @机器人
-    # if hasattr(self, "detail") and getattr(self.detail, "properties", None):  # type: ignore
-    #     mentions = self.detail.properties.get("mentions", [])  # type: ignore
-    #     if mentions and int(event.self_uid) in mentions:
-    #         event.to_me = True
+    if not event.message:
+        return
+
+    last_msg_seg = event.message[-1]
+    if last_msg_seg.type != "text":
+        return
+
+    last_text = last_msg_seg.data["text"].rstrip()
+    if re.search(rf"(?:\s+|^)@{user_id}$", last_text):
+        event.to_me = True
+        last_msg_seg.data["text"] = re.sub(rf"(?:\s+|^)@{user_id}$", "", last_text).rstrip()
+        if not last_msg_seg.data["text"]:
+            del event.message[-1]
+
 
 def _check_nickname(bot: "Bot", event: MessageEvent) -> None:
-    """检查消息开头是否存在昵称，去除并赋值 `event.to_me`。
+    """检查消息开头是否存在昵称，去除并赋值 `event.to_me`
 
     Args:
         bot: Bot 对象
@@ -79,19 +85,21 @@ class Bot(BaseBot):
     """
     VoceChat 协议 Bot 适配
     """
+    adapter: "Adapter"
 
     @override
-    def __init__(self, adapter: "Adapter", self_id: str, botConfig: BotConfig):
+    def __init__(self, adapter: "Adapter", self_id: str, botConfig: BotConfig) -> None:
         super().__init__(adapter, self_id)
-        self.self_id: str = self_id
-        self.user_id: str = botConfig.user_id
-        self.server_base: URL = URL(botConfig.server)
-        self.api_key: str = botConfig.api_key
+        self.self_id = self_id
+        self.user_id = botConfig.user_id
+        self.server_base = URL(botConfig.server)
+        self.api_key = botConfig.api_key
 
     async def handle_event(self, event: Event) -> None:
         """处理事件"""
         if isinstance(event, MessageEvent):
             event.original_message = event.get_message()
+            # _check_reply(self, event)
             _check_at_me(self, event)
             _check_nickname(self, event)
 
@@ -101,11 +109,11 @@ class Bot(BaseBot):
         self,
         message: Message,
         *,
-        user_id: Optional[int] = None,
-        group_id: Optional[int] = None,
-        reply: Optional[int] = None,
-        **kwargs: Any
-    ) -> Any:
+        user_id: int | None = None,
+        group_id: int | None = None,
+        reply: int | None = None,
+        **kwargs: Any,
+    ) -> int | str | None:
         """发送消息到指定会话
         user_id group_id reply 三选一
         
@@ -116,25 +124,26 @@ class Bot(BaseBot):
             reply: 回复的消息ID
             **kwargs: 其他参数
         """
-        message_id = None
+        _ = kwargs
+        message_id: int | str | None = None
         message.reduce()
 
         for message_segment in message:
-            content_type: Union[str, ContentType] = ContentType.TEXT_PLAIN
-            content: Any = None
-            properties: Any = None
+            content_type: str = ContentType.TEXT_PLAIN.value
+            content: str | dict[str, Any] | None = None
+            properties: dict[str, Any] | None = None
             request = None
 
             if message_segment.type == "file":
                 try:
                     file: File = message_segment.data["file"]
-                    content_type = ContentType.VOCECHAT_FILE
+                    content_type = ContentType.VOCECHAT_FILE.value
 
                     if file.file_id:
                         content = file.file_id
-                    else:    
+                    else:
                         file_result = await self.upload_file(file)
-                        content = {"path": file_result.get("path")}
+                        content = file_result.get("path")
                         properties = file_result.get("image_properties")
 
                 except Exception as e:
@@ -142,7 +151,7 @@ class Bot(BaseBot):
                     raise RuntimeError(f"Failed to upload file: {e}") from e
                     
             elif message_segment.type == "markdown":
-                content_type = ContentType.TEXT_MARKDOWN
+                content_type = ContentType.TEXT_MARKDOWN.value
                 content = message_segment.data.get("text")
 
             else:
@@ -155,7 +164,7 @@ class Bot(BaseBot):
                         content_type=content_type,
                         content=content,
                         properties=properties
-                    ) 
+                    )
                 elif group_id:
                     request = API.send_to_group(
                         gid=group_id,
@@ -172,7 +181,7 @@ class Bot(BaseBot):
                     )
                 
                 if request:
-                    message_id = await self.call_api("send_message", request= request)
+                    message_id = await self.call_api("send_message", request=request)
             except Exception as e:
                 log("ERROR", f"Failed to send message: {e}")
                 raise
@@ -183,9 +192,9 @@ class Bot(BaseBot):
     async def send(
         self,
         event: Event,
-        message: Union[str, Message, MessageSegment],
-        **kwargs,
-    ) -> Any:
+        message: str | Message | MessageSegment,
+        **kwargs: Any,
+    ) -> int | str | None:
         """发送消息
         
         Args:
@@ -196,7 +205,7 @@ class Bot(BaseBot):
         from_uid = getattr(event, "from_uid", None)
         if not from_uid:
             raise ValueError("Event has no from_uid")
-        
+
         target = getattr(event, "target", None)
         if not target:
             raise ValueError("Event has no target")
@@ -207,18 +216,21 @@ class Bot(BaseBot):
             msg = Message(message)
         else:
             msg = message
-        
+
+        group_id = getattr(target, "gid", None)
+        user_id = None if group_id else from_uid
+
         return await self.send_message(
             message=msg,
-            user_id=from_uid,
-            group_id=getattr(target, "gid", None),
+            user_id=user_id,
+            group_id=group_id,
             **kwargs
         )
 
     async def download_file(
         self,
-        file_id: Optional[str] = None,
-        message: Optional[Union[Message, MessageSegment]] = None
+        file_id: str | None = None,
+        message: Message | MessageSegment | None = None,
     ) -> bytes:
         """
         下载文件
@@ -252,7 +264,7 @@ class Bot(BaseBot):
         response = await self.call_api("download_file", file_id=file_id)
         return response.content
 
-    async def upload_file(self, file: File) -> Dict[str, Any]:
+    async def upload_file(self, file: File) -> dict[str, Any]:
         """
         上传文件
         
@@ -277,19 +289,19 @@ class Bot(BaseBot):
         extension = mimetypes.guess_extension(mime_type)
         file_name = file.filename
 
-        content_type = ContentType.VOCECHAT_FILE # 未知的文件类型
+        content_type = ContentType.VOCECHAT_FILE.value
     
         # 根据MIME类型确定内容类型
         if mime_type:
-            if mime_type.startswith('audio/'):
+            if mime_type.startswith("audio/"):
                 content_type = mime_type
-            if mime_type.startswith('image/'):
+            if mime_type.startswith("image/"):
                 content_type = mime_type
-            if mime_type.startswith('video/'):
+            if mime_type.startswith("video/"):
                 content_type = mime_type
 
         if not file_name:
-            file_name = mime_type.split('/')[0]
+            file_name = mime_type.split("/")[0] if mime_type else "unknown"
 
         if extension and not file_name.lower().endswith(extension.lower()):
             file_name += extension
@@ -310,8 +322,8 @@ class Bot(BaseBot):
             prepare_result: Response = await self.call_api(
                 api="file_prepare",
                 content_type=content_type,
-                filename=file_name, 
-                raw= True
+                filename=file_name,
+                raw=True,
             )
             
             # 解析准备结果
@@ -345,11 +357,11 @@ class Bot(BaseBot):
             
             # 上传文件数据
             upload_result: Response = await self.call_api(
-                api= "file_upload",
-                file_id= file_id,
-                chunk_data= file_data,
-                chunk_is_last= True,
-                raw= True
+                api="file_upload",
+                file_id=file_id,
+                chunk_data=file_data,
+                chunk_is_last=True,
+                raw=True,
             )
 
             if upload_result.status_code != 200:
@@ -386,3 +398,75 @@ class Bot(BaseBot):
         except Exception as e:
             log("ERROR", f"File upload failed for {file_name}: {e}")
             raise RuntimeError(f"File upload failed: {e}") from e
+
+    async def command_add(self, command: str, description: str) -> Any:
+        request = API.command_add(command, description)
+        return await self.call_api("command_add", request=request)
+
+    async def command_get(self) -> Any:
+        request = API.command_get()
+        return await self.call_api("command_get", request=request)
+
+    async def command_delete(self, id: int) -> Any:
+        request = API.command_delete(id)
+        return await self.call_api("command_delete", request=request)
+
+    async def command_update(self, id: int, command: str, description: str) -> Any:
+        request = API.command_update(id, command, description)
+        return await self.call_api("command_update", request=request)
+
+    async def edit(self, mid: int, message: str | Message | MessageSegment, properties: dict[str, Any] | None = None) -> Any:
+        if isinstance(message, str):
+            msg = Message(MessageSegment.text(message))
+        elif isinstance(message, MessageSegment):
+            msg = Message(message)
+        else:
+            msg = message
+
+        msg.reduce()
+        content_type: str = ContentType.TEXT_PLAIN.value
+        content: str | dict[str, Any] | None = None
+
+        for message_segment in msg:
+            if message_segment.type == "file":
+                try:
+                    file: File = message_segment.data["file"]
+                    content_type = ContentType.VOCECHAT_FILE.value
+                    if file.file_id:
+                        content = file.file_id
+                    else:
+                        file_result = await self.upload_file(file)
+                        content = {"path": file_result.get("path")}
+                        properties = properties or {}
+                        properties.update(file_result.get("image_properties", {}))
+                except Exception as e:
+                    log("ERROR", f"File upload failed: {e}")
+                    raise RuntimeError(f"Failed to upload file: {e}") from e
+            elif message_segment.type == "markdown":
+                content_type = ContentType.TEXT_MARKDOWN.value
+                content = message_segment.data.get("text")
+            else:
+                content = message_segment.data.get("text")
+
+        request = API.edit(mid, content_type, content, properties)
+        return await self.call_api("edit", request=request)
+
+    async def delete(self, mid: int) -> Any:
+        request = API.delete(mid)
+        return await self.call_api("delete", request=request)
+
+    async def secret_get(self) -> Any:
+        request = API.secret_get()
+        return await self.call_api("secret_get", request=request)
+
+    async def secret_set(self, secret: str) -> Any:
+        request = API.secret_set(secret)
+        return await self.call_api("secret_set", request=request)
+
+    async def user_messages(self, uid: int) -> Any:
+        request = API.user_messages(uid)
+        return await self.call_api("user_messages", request=request)
+
+    async def group_messages(self, gid: int) -> Any:
+        request = API.group_messages(gid)
+        return await self.call_api("group_messages", request=request)
