@@ -267,12 +267,13 @@ class Adapter(BaseAdapter):
 
                     if detail_type == "reply":
                         reply_id = detail.get("mid", 0)
+                        cached_event = self.message_cache[bot_self_id].get(reply_id)
                         event.reply = Reply(
                             mid=reply_id,
-                            message=self.message_cache[bot_self_id].get(reply_id)
+                            message=cached_event.message if cached_event else None
                         )
 
-                    self.message_cache[bot_self_id].add(event.mid, event.message)
+                    self.message_cache[bot_self_id].add(event.mid, event)
 
                     return event
 

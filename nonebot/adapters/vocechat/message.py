@@ -1,7 +1,7 @@
 import io
 import re
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Literal
 
 from nonebot.adapters import Message as BaseMessage
 from nonebot.adapters import MessageSegment as BaseMessageSegment
@@ -51,6 +51,20 @@ class File:
 
 
 class MessageSegment(BaseMessageSegment["Message"]):
+    @staticmethod
+    def _media(
+        segment_type: Literal["file", "image", "audio", "video"],
+        file: str | bytes | io.BytesIO | Path | None = None,
+        file_id: str | None = None,
+        filename: str | None = None,
+        properties: dict[str, Any] | None = None,
+    ) -> "MessageSegment":
+        file_obj = File(file=file, file_id=file_id, filename=filename)
+        data: dict[str, Any] = {"file": file_obj}
+        if properties:
+            data["properties"] = properties
+        return MessageSegment(segment_type, data)
+
     @classmethod
     @override
     def get_message_class(cls) -> type["Message"]:
@@ -64,8 +78,14 @@ class MessageSegment(BaseMessageSegment["Message"]):
             return f"@{self.data.get('user_id', '')} "
         elif self.type == "markdown":
             return "[Markdown]"
-        elif self.type == "file":
-            return f"[File: {self.data.get('file', '')}]"
+        elif self.type in {"file", "image", "audio", "video"}:
+            labels = {
+                "file": "File",
+                "image": "Image",
+                "audio": "Audio",
+                "video": "Video",
+            }
+            return f"[{labels.get(self.type, 'File')}: {self.data.get('file', '')}]"
         return ""
 
     @override
@@ -87,11 +107,54 @@ class MessageSegment(BaseMessageSegment["Message"]):
         file: str | bytes | io.BytesIO | Path | None = None,
         file_id: str | None = None,
         filename: str | None = None,
+        properties: dict[str, Any] | None = None,
     ) -> "MessageSegment":
         """创建文件消息段"""
-        file_obj = File(file=file, file_id=file_id, filename=filename)
-        return MessageSegment("file", {"file": file_obj})
+        return MessageSegment._media(
+            "file", file=file, file_id=file_id, filename=filename, properties=properties
+        )
     
+    @staticmethod
+    def archive(archive_id: str) -> "MessageSegment":
+        """创建合并转发消息段"""
+        return MessageSegment("archive", {"archive_id": archive_id})
+
+    @staticmethod
+    def image(
+        file: str | bytes | io.BytesIO | Path | None = None,
+        file_id: str | None = None,
+        filename: str | None = None,
+        properties: dict[str, Any] | None = None,
+    ) -> "MessageSegment":
+        """创建图片消息段"""
+        return MessageSegment._media(
+            "image", file=file, file_id=file_id, filename=filename, properties=properties
+        )
+
+    @staticmethod
+    def audio(
+        file: str | bytes | io.BytesIO | Path | None = None,
+        file_id: str | None = None,
+        filename: str | None = None,
+        properties: dict[str, Any] | None = None,
+    ) -> "MessageSegment":
+        """创建音频消息段"""
+        return MessageSegment._media(
+            "audio", file=file, file_id=file_id, filename=filename, properties=properties
+        )
+
+    @staticmethod
+    def video(
+        file: str | bytes | io.BytesIO | Path | None = None,
+        file_id: str | None = None,
+        filename: str | None = None,
+        properties: dict[str, Any] | None = None,
+    ) -> "MessageSegment":
+        """创建视频消息段"""
+        return MessageSegment._media(
+            "video", file=file, file_id=file_id, filename=filename, properties=properties
+        )
+
     @staticmethod
     def mention(user_id: int) -> "MessageSegment":
         """提及消息段"""
@@ -104,12 +167,16 @@ class MessageSegment(BaseMessageSegment["Message"]):
             "mention": ContentType.TEXT_PLAIN,
             "markdown": ContentType.TEXT_MARKDOWN,
             "file": ContentType.VOCECHAT_FILE,
+            "image": ContentType.VOCECHAT_FILE,
+            "audio": ContentType.VOCECHAT_AUDIO,
+            "video": ContentType.VOCECHAT_FILE,
+            "archive": ContentType.VOCECHAT_ARCHIVE,
         }
         return mapping.get(self.type, ContentType.TEXT_PLAIN).value
     
     def get_data(self) -> str | dict[str, Any]:
         """获取消息段的数据表示"""
-        if self.type == "file":
+        if self.type in {"file", "image", "audio", "video"}:
             return {"data": self.data.get("file", "")}
         if self.type == "mention":
             return f"@{self.data.get('user_id', '')} "
@@ -164,7 +231,7 @@ class Message(BaseMessage[MessageSegment]):
         
         # 如果消息包含文件类型，返回文件路径
         for segment in self:
-            if segment.type == "file":
+            if segment.type in {"file", "image", "audio", "video"}:
                 return segment.get_data()
         
         # 否则返回合并后的文本内容

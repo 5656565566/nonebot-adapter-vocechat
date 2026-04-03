@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 from nonebot.adapters import Event as BaseEvent
 from nonebot.compat import model_dump
@@ -8,17 +8,13 @@ from pydantic import BaseModel, ConfigDict, model_validator
 from typing_extensions import override
 
 from .api import ContentType
-from .message import Message, MessageSegment
+from .message import File, Message, MessageSegment
 
 class Target(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
     gid: int | None = None
     uid: int | None = None
 
 class Event(BaseEvent):
-    model_config = ConfigDict(extra="ignore")
-
     time: datetime | None = None
 
     created_at: int
@@ -60,8 +56,6 @@ class Event(BaseEvent):
         return False
 
 class MessageDetail(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
     content: str | None = None
     content_type: ContentType = ContentType.TEXT_PLAIN
     expires_in: int | None = None
@@ -103,15 +97,39 @@ class MessageEvent(Event):
     @model_validator(mode="after")
     def parse_message_from_detail(self) -> "MessageEvent":
         """根据 detail 自动解析并填充 message 字段"""
-        if self.detail.content_type == "text/plain":
+        if self.detail.content_type == ContentType.TEXT_PLAIN:
             self.message = Message(MessageSegment.text(self.detail.content or ""))
-        elif self.detail.content_type == "text/markdown":
+        elif self.detail.content_type == ContentType.TEXT_MARKDOWN:
             self.message = Message(MessageSegment.markdown(self.detail.content or ""))
-        elif self.detail.content_type == "vocechat/file":
-            file_seg = MessageSegment.file(file_id=self.detail.content or "")
-            if self.detail.properties:
-                file_seg.data["properties"] = self.detail.properties
+        elif self.detail.content_type == ContentType.VOCECHAT_FILE:
+            file_type = "file"
+            content = self.detail.content or ""
+            properties = self.detail.properties or {}
+
+            if isinstance(content, str):
+                lowered_content = content.lower()
+                if lowered_content.endswith((".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg", ".avif", ".ico")):
+                    file_type = "image"
+                elif lowered_content.endswith((".mp4", ".webm", ".mov", ".mkv", ".avi", ".flv", ".wmv", ".m4v")):
+                    file_type = "video"
+
+            if properties.get("width") and properties.get("height"):
+                file_type = "image"
+
+            if file_type == "image":
+                file_seg = MessageSegment.image(file_id=content, properties=properties or None)
+            elif file_type == "video":
+                file_seg = MessageSegment.video(file_id=content, properties=properties or None)
+            else:
+                file_seg = MessageSegment.file(file_id=content, properties=properties or None)
             self.message = Message(file_seg)
+        elif self.detail.content_type == ContentType.VOCECHAT_AUDIO:
+            file_seg = MessageSegment.audio(
+                file_id=self.detail.content or "", properties=self.detail.properties or None
+            )
+            self.message = Message(file_seg)
+        elif self.detail.content_type == ContentType.VOCECHAT_ARCHIVE:
+            self.message = Message(MessageSegment.archive(archive_id=self.detail.content or ""))
         else:
             self.message = Message(MessageSegment.text(self.detail.content or ""))
 

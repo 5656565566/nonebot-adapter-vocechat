@@ -1,6 +1,7 @@
 import json
 import mimetypes
 import re
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from nonebot.adapters import Bot as BaseBot
@@ -10,7 +11,13 @@ from typing_extensions import override
 
 from .api import API, ContentType
 from .config import BotConfig
-from .event import Event, MessageEvent
+from .event import (
+    Event,
+    MessageEvent,
+    GroupMessageEvent,
+    PrivateMessageEvent,
+    Target
+)
 from .message import File, Message, MessageSegment
 from .utils import get_mime_type, log
 
@@ -18,10 +25,18 @@ if TYPE_CHECKING:
     from .adapter import Adapter
 
 def _check_reply(bot: "Bot", event: MessageEvent) -> None:
+    """检查回复消息并在需要时设置 `to_me`"""
     if event.reply is None:
         return
 
-    # 需通过后续的回复缓存功能新增 才能完美实现
+    cache = bot.adapter.message_cache.get(bot.self_id)
+    if not cache:
+        return
+
+    cached_event = cache.get(event.reply.mid)
+    if cached_event and str(cached_event.from_uid) == str(bot.user_id):
+        event.to_me = True
+
 
 
 def _check_at_me(bot: "Bot", event: MessageEvent) -> None:
@@ -99,7 +114,7 @@ class Bot(BaseBot):
         """处理事件"""
         if isinstance(event, MessageEvent):
             event.original_message = event.get_message()
-            # _check_reply(self, event)
+            _check_reply(self, event)
             _check_at_me(self, event)
             _check_nickname(self, event)
 
@@ -131,20 +146,20 @@ class Bot(BaseBot):
         for message_segment in message:
             content_type: str = ContentType.TEXT_PLAIN.value
             content: str | dict[str, Any] | None = None
-            properties: dict[str, Any] | None = None
+            properties: dict[str, Any] | None = message_segment.data.get("properties")
             request = None
 
-            if message_segment.type == "file":
+            if message_segment.type in {"file", "image", "audio", "video"}:
                 try:
                     file: File = message_segment.data["file"]
-                    content_type = ContentType.VOCECHAT_FILE.value
+                    content_type = message_segment.get_content_type()
 
                     if file.file_id:
-                        content = file.file_id
+                        content = {"path": file.file_id}
                     else:
                         file_result = await self.upload_file(file)
-                        content = file_result.get("path")
-                        properties = file_result.get("image_properties")
+                        content = {"path": file_result.get("path")}
+                        properties = file_result.get("image_properties") or properties
 
                 except Exception as e:
                     log("ERROR", f"File upload failed: {e}")
@@ -182,6 +197,32 @@ class Bot(BaseBot):
                 
                 if request:
                     message_id = await self.call_api("send_message", request=request)
+                    if message_id:
+                        
+                        event_data = {
+                            "created_at": int(datetime.now().timestamp() * 1000),
+                            "from_uid": int(self.user_id),
+                            "mid": int(message_id),
+                            "self_uid": self.user_id,
+                            "time": datetime.now(),
+                            "message_id": int(message_id),
+                        }
+                        
+                        target_obj = Target(gid=group_id, uid=user_id)
+                        
+                        if group_id:
+                            mock_event = GroupMessageEvent.model_construct(
+                                target=target_obj, **event_data
+                            )
+                        else:
+                            mock_event = PrivateMessageEvent.model_construct(
+                                target=target_obj, **event_data
+                            )
+                        
+                        mock_event.message = message
+                        if cache := getattr(self, "adapter").message_cache.get(self.self_id):
+                            cache.add(int(message_id), mock_event)
+
             except Exception as e:
                 log("ERROR", f"Failed to send message: {e}")
                 raise
@@ -245,7 +286,7 @@ class Bot(BaseBot):
 
         if isinstance(message, Message):
             for message_segment in message:
-                if message_segment.type == "file":
+                if message_segment.type in {"file", "image", "audio", "video"}:
                     file_obj = message_segment.data.get("file")
                     if file_obj:
                         file_id = getattr(file_obj, "file_id", None)
@@ -253,7 +294,7 @@ class Bot(BaseBot):
                         break
 
         if isinstance(message, MessageSegment):
-            if message.type == "file":
+            if message.type in {"file", "image", "audio", "video"}:
                 file_obj = message.data.get("file")
                 if file_obj:
                     file_id = getattr(file_obj, "file_id", None)
@@ -433,7 +474,7 @@ class Bot(BaseBot):
                     file: File = message_segment.data["file"]
                     content_type = ContentType.VOCECHAT_FILE.value
                     if file.file_id:
-                        content = file.file_id
+                        content = {"path": file.file_id}
                     else:
                         file_result = await self.upload_file(file)
                         content = {"path": file_result.get("path")}
