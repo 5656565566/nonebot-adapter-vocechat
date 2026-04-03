@@ -41,7 +41,7 @@ vocechat_history_length=100 # 默认值
 
 `vocechat_bots` 用于配置机器人
 
-`name` 是任意的 bot 名称会决定 webhook 地址 如 http://{nonebot_host}:{nonebot_post}/vocechat/webhook?bot={name}
+`name` 是任意的 bot 名称会决定 webhook 地址 如 http://{nonebot_host}:{nonebot_post}/vocechat/{name}
 
 `server` 为 vocechat 服务器的地址。
 
