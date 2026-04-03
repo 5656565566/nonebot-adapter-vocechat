@@ -11,7 +11,7 @@ from .api import ContentType
 
 
 class File:
-    """文件类 方便处理文件"""
+    """文件类"""
 
     def __init__(
         self,
@@ -48,6 +48,9 @@ class File:
 
     def __str__(self) -> str:
         return self.filename or self.file_id or "Unknown"
+
+    def has_remote_file(self) -> bool:
+        return bool(self.file_id)
 
 
 class MessageSegment(BaseMessageSegment["Message"]):

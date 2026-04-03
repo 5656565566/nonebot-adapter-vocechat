@@ -2,6 +2,7 @@ import json
 import mimetypes
 import re
 from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from nonebot.adapters import Bot as BaseBot
@@ -147,6 +148,7 @@ class Bot(BaseBot):
             content_type: str = ContentType.TEXT_PLAIN.value
             content: str | dict[str, Any] | None = None
             properties: dict[str, Any] | None = message_segment.data.get("properties")
+            original_properties = properties.copy() if properties else None
             request = None
 
             if message_segment.type in {"file", "image", "audio", "video"}:
@@ -154,12 +156,18 @@ class Bot(BaseBot):
                     file: File = message_segment.data["file"]
                     content_type = message_segment.get_content_type()
 
-                    if file.file_id:
+                    if message_segment.type == "audio":
+                        content_type = ContentType.VOCECHAT_AUDIO.value
+
+                    if file.has_remote_file():
                         content = {"path": file.file_id}
                     else:
                         file_result = await self.upload_file(file)
-                        content = {"path": file_result.get("path")}
-                        properties = file_result.get("image_properties") or properties
+                        file.file_id = file_result.get("path")
+                        content = {"path": file.file_id}
+                        upload_properties = file_result.get("image_properties")
+                        if upload_properties:
+                            properties = {**(properties or {}), **upload_properties}
 
                 except Exception as e:
                     log("ERROR", f"File upload failed: {e}")
@@ -288,16 +296,16 @@ class Bot(BaseBot):
             for message_segment in message:
                 if message_segment.type in {"file", "image", "audio", "video"}:
                     file_obj = message_segment.data.get("file")
-                    if file_obj:
-                        file_id = getattr(file_obj, "file_id", None)
+                    if file_obj and file_obj.has_remote_file():
+                        file_id = file_obj.file_id
                     if file_id:
                         break
 
         if isinstance(message, MessageSegment):
             if message.type in {"file", "image", "audio", "video"}:
                 file_obj = message.data.get("file")
-                if file_obj:
-                    file_id = getattr(file_obj, "file_id", None)
+                if file_obj and file_obj.has_remote_file():
+                    file_id = file_obj.file_id
 
         if not file_id:
             return b""
@@ -327,12 +335,17 @@ class Bot(BaseBot):
         """
         file_data = await file.get_data()
         mime_type = get_mime_type(file_data)
-        extension = mimetypes.guess_extension(mime_type)
         file_name = file.filename
+        file_suffix = Path(file_name).suffix.lower() if file_name else ""
 
         content_type = ContentType.VOCECHAT_FILE.value
-    
-        # 根据MIME类型确定内容类型
+
+        if file_name:
+            guessed_by_name, _ = mimetypes.guess_type(file_name)
+            if guessed_by_name:
+                mime_type = guessed_by_name
+
+        # 根据MIME类型确定内容类型，优先尊重快捷消息段与文件名推导
         if mime_type:
             if mime_type.startswith("audio/"):
                 content_type = mime_type
@@ -343,9 +356,13 @@ class Bot(BaseBot):
 
         if not file_name:
             file_name = mime_type.split("/")[0] if mime_type else "unknown"
-
-        if extension and not file_name.lower().endswith(extension.lower()):
-            file_name += extension
+            extension = mimetypes.guess_extension(mime_type)
+            if extension and not file_name.lower().endswith(extension.lower()):
+                file_name += extension
+        elif not file_suffix and mime_type:
+            extension = mimetypes.guess_extension(mime_type)
+            if extension:
+                file_name += extension
 
         # 验证文件数据
         if not file_data:
@@ -469,17 +486,26 @@ class Bot(BaseBot):
         content: str | dict[str, Any] | None = None
 
         for message_segment in msg:
-            if message_segment.type == "file":
+            segment_properties = message_segment.data.get("properties")
+            if segment_properties:
+                properties = {**(properties or {}), **segment_properties}
+
+            if message_segment.type in {"file", "image", "audio", "video"}:
                 try:
                     file: File = message_segment.data["file"]
-                    content_type = ContentType.VOCECHAT_FILE.value
-                    if file.file_id:
+                    content_type = message_segment.get_content_type()
+
+                    if message_segment.type == "audio":
+                        content_type = ContentType.VOCECHAT_AUDIO.value
+                    if file.has_remote_file():
                         content = {"path": file.file_id}
                     else:
                         file_result = await self.upload_file(file)
-                        content = {"path": file_result.get("path")}
-                        properties = properties or {}
-                        properties.update(file_result.get("image_properties", {}))
+                        file.file_id = file_result.get("path")
+                        content = {"path": file.file_id}
+                        upload_properties = file_result.get("image_properties")
+                        if upload_properties:
+                            properties = {**(properties or {}), **upload_properties}
                 except Exception as e:
                     log("ERROR", f"File upload failed: {e}")
                     raise RuntimeError(f"Failed to upload file: {e}") from e
