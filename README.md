@@ -8,6 +8,9 @@
 
 _✨ vocechat webhook 协议适配 ✨_
 
+[![CodeFactor](https://www.codefactor.io/repository/github/5656565566/nonebot-adapter-vocechat/badge)](https://www.codefactor.io/repository/github/5656565566/nonebot-adapter-vocechat)
+[![NoneBot](https://img.shields.io/badge/nonebot-2.5.0+-red)](https://nonebot.dev/)
+
 </div>
 
 > [!NOTE]
