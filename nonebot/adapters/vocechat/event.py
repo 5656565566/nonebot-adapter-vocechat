@@ -42,7 +42,7 @@ class Event(BaseEvent):
     @override
     def get_user_id(self) -> str:
         return str(self.from_uid)
-    
+
     @override
     def get_session_id(self) -> str:
         if self.target.gid:
@@ -94,44 +94,66 @@ class MessageEvent(Event):
     def get_message(self) -> Message:
         return self.message or Message()
 
+    @staticmethod
+    def _detect_file_type(content: str, properties: dict[str, Any]) -> str:
+        file_type = "file"
+
+        lowered_content = content.lower()
+        if lowered_content.endswith(
+            (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg", ".avif", ".ico")
+        ):
+            file_type = "image"
+        elif lowered_content.endswith(
+            (".mp4", ".webm", ".mov", ".mkv", ".avi", ".flv", ".wmv", ".m4v")
+        ):
+            file_type = "video"
+
+        if properties.get("width") and properties.get("height"):
+            file_type = "image"
+
+        return file_type
+
+    @classmethod
+    def _build_file_message(cls, content: str, properties: dict[str, Any]) -> Message:
+        file_type = cls._detect_file_type(content, properties)
+
+        if file_type == "image":
+            file_seg = MessageSegment.image(
+                file_id=content, properties=properties or None
+            )
+        elif file_type == "video":
+            file_seg = MessageSegment.video(
+                file_id=content, properties=properties or None
+            )
+        else:
+            file_seg = MessageSegment.file(
+                file_id=content, properties=properties or None
+            )
+        return Message(file_seg)
+
+    def _parse_detail_message(self) -> Message:
+        content = self.detail.content or ""
+        properties = self.detail.properties or {}
+
+        if self.detail.content_type == ContentType.TEXT_PLAIN:
+            return Message(MessageSegment.text(content))
+        if self.detail.content_type == ContentType.TEXT_MARKDOWN:
+            return Message(MessageSegment.markdown(content))
+        if self.detail.content_type == ContentType.VOCECHAT_FILE:
+            return self._build_file_message(content, properties)
+        if self.detail.content_type == ContentType.VOCECHAT_AUDIO:
+            file_seg = MessageSegment.audio(
+                file_id=content, properties=properties or None
+            )
+            return Message(file_seg)
+        if self.detail.content_type == ContentType.VOCECHAT_ARCHIVE:
+            return Message(MessageSegment.archive(archive_id=content))
+        return Message(MessageSegment.text(content))
+
     @model_validator(mode="after")
     def parse_message_from_detail(self) -> "MessageEvent":
         """根据 detail 自动解析并填充 message 字段"""
-        if self.detail.content_type == ContentType.TEXT_PLAIN:
-            self.message = Message(MessageSegment.text(self.detail.content or ""))
-        elif self.detail.content_type == ContentType.TEXT_MARKDOWN:
-            self.message = Message(MessageSegment.markdown(self.detail.content or ""))
-        elif self.detail.content_type == ContentType.VOCECHAT_FILE:
-            file_type = "file"
-            content = self.detail.content or ""
-            properties = self.detail.properties or {}
-
-            if isinstance(content, str):
-                lowered_content = content.lower()
-                if lowered_content.endswith((".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg", ".avif", ".ico")):
-                    file_type = "image"
-                elif lowered_content.endswith((".mp4", ".webm", ".mov", ".mkv", ".avi", ".flv", ".wmv", ".m4v")):
-                    file_type = "video"
-
-            if properties.get("width") and properties.get("height"):
-                file_type = "image"
-
-            if file_type == "image":
-                file_seg = MessageSegment.image(file_id=content, properties=properties or None)
-            elif file_type == "video":
-                file_seg = MessageSegment.video(file_id=content, properties=properties or None)
-            else:
-                file_seg = MessageSegment.file(file_id=content, properties=properties or None)
-            self.message = Message(file_seg)
-        elif self.detail.content_type == ContentType.VOCECHAT_AUDIO:
-            file_seg = MessageSegment.audio(
-                file_id=self.detail.content or "", properties=self.detail.properties or None
-            )
-            self.message = Message(file_seg)
-        elif self.detail.content_type == ContentType.VOCECHAT_ARCHIVE:
-            self.message = Message(MessageSegment.archive(archive_id=self.detail.content or ""))
-        else:
-            self.message = Message(MessageSegment.text(self.detail.content or ""))
+        self.message = self._parse_detail_message()
 
         if self.target.uid is not None and self.target.gid is None:
             self.to_me = True

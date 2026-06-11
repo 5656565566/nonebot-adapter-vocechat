@@ -54,10 +54,11 @@ class Adapter(BaseAdapter):
             )
         if not isinstance(self.driver, HTTPClientMixin):
             raise RuntimeError(
-                f"Current driver {self.config.driver} does not support http client requests! "
+                f"Current driver {self.config.driver} does not support "
+                "http client requests! "
                 f"{self.get_name()} Adapter need a HTTPClient Driver to work."
             )
-        
+
 
         @self.on_ready
         async def _() -> None:
@@ -112,68 +113,64 @@ class Adapter(BaseAdapter):
             return b""
         return str(response_content).encode("utf-8")
 
-    @override
-    async def _call_api(self, bot: Bot, api: str, **data: Any) -> Any:
-        """`Adapter` 实际调用 api 的逻辑实现函数 实现该方法以调用 api
+    @staticmethod
+    def _build_api_request(api: str, data: dict[str, Any]) -> Request | None:
+        if not hasattr(API, api):
+            return cast(Request | None, data.get("request"))
 
-        参数:
-            api: API 名称
-            data: API 数据
-        """
-        log("DEBUG", f"call api {api}")
+        api_method = getattr(API, api)
+        sign = inspect.signature(api_method)
 
-        request: Request | None = None
-        raw = bool(data.pop("raw", False))
+        for param in sign.parameters.values():
+            if param.name == "self":
+                continue
 
-        if hasattr(API, api):
-            api_method = getattr(API, api)
-            sign = inspect.signature(api_method)
+            if param.name not in data:
+                if param.default == inspect.Parameter.empty:
+                    log(
+                        "ERROR",
+                        f"Missing required parameter: {param.name} for API {api}",
+                    )
+                    raise TypeError(
+                        f"Missing required parameter: {param.name} for API {api}"
+                    )
+                data[param.name] = param.default
 
-            for param in sign.parameters.values():
-                if param.name == "self":
-                    continue
+        return api_method(**data)
 
-                if param.name not in data:
-                    if param.default == inspect.Parameter.empty:
-                        log("ERROR", f"Missing required parameter: {param.name} for API {api}")
-                        raise TypeError(f"Missing required parameter: {param.name} for API {api}")
-                    else:
-                        data[param.name] = param.default
-
-            request = api_method(**data)
-        else:
-            request = cast(Request | None, data.get("request"))
-
-        if request is None:
-            raise ApiNotAvailable()
-
+    @staticmethod
+    def _prepare_request(bot: Bot, request: Request) -> None:
         request.headers["x-api-key"] = str(bot.api_key)
         server_base = str(bot.server_base).rstrip("/")
         request_path = str(request.url)
         request.url = URL(f"{server_base}{request_path}")
 
+    async def _send_api_request(self, api: str, request: Request) -> Response:
         try:
-            response = await self.request(request)
+            return await self.request(request)
         except ApiNotAvailable:
             raise
         except Exception as e:
             log("ERROR", f"Network error when calling API {api}: {e}")
             raise NetworkError(str(e)) from e
 
-        if response.status_code >= 400:
-            log(
-                "DEBUG",
-                "VoceChat request failed: "
-                f"api={api}, method={request.method}, url={request.url}, "
-                f"status={response.status_code}, "
-                f"response={self._normalize_response_content(response)!r}",
-            )
-            log("ERROR", f"API {api} failed with status code {response.status_code}")
-            self._raise_api_exception(response)
+    def _check_api_response(
+        self, api: str, request: Request, response: Response
+    ) -> None:
+        if response.status_code < 400:
+            return
 
-        if raw:
-            return response
+        log(
+            "DEBUG",
+            "VoceChat request failed: "
+            f"api={api}, method={request.method}, url={request.url}, "
+            f"status={response.status_code}, "
+            f"response={self._normalize_response_content(response)!r}",
+        )
+        log("ERROR", f"API {api} failed with status code {response.status_code}")
+        self._raise_api_exception(response)
 
+    def _parse_api_response(self, api: str, response: Response) -> Any:
         content_type = response.headers.get("content-type", "").lower()
         normalized_content = self._normalize_response_content(response)
 
@@ -192,6 +189,48 @@ class Adapter(BaseAdapter):
         except UnicodeDecodeError:
             return normalized_content
 
+    @override
+    async def _call_api(self, bot: Bot, api: str, **data: Any) -> Any:
+        """`Adapter` 实际调用 api 的逻辑实现函数 实现该方法以调用 api
+
+        参数:
+            api: API 名称
+            data: API 数据
+        """
+        log("DEBUG", f"call api {api}")
+
+        raw = bool(data.pop("raw", False))
+        request = self._build_api_request(api, data)
+
+        if request is None:
+            raise ApiNotAvailable()
+
+        self._prepare_request(bot, request)
+        response = await self._send_api_request(api, request)
+        self._check_api_response(api, request, response)
+
+        if raw:
+            return response
+
+        return self._parse_api_response(api, response)
+
+    @staticmethod
+    def _load_json_payload(request: Request) -> dict[str, Any] | None:
+        try:
+            raw_content = request.content
+            if isinstance(raw_content, bytes):
+                return json.loads(raw_content.decode("utf-8")) if raw_content else {}
+            if isinstance(raw_content, str):
+                return json.loads(raw_content) if raw_content else {}
+            return {}
+        except (UnicodeDecodeError, json.JSONDecodeError, TypeError):
+            return None
+
+    def _get_webhook_bot(self, request: Request) -> Bot | None:
+        path_parts = request.url.path.strip("/").split("/")
+        name = path_parts[-1]
+        bot = self.bots.get(name)
+        return cast(Bot | None, bot)
 
     async def _handle_http(self, request: Request) -> Response:
         """处理 VoceChat webhook 请求"""
@@ -199,24 +238,13 @@ class Adapter(BaseAdapter):
             return Response(status_code=200)
 
         try:
-            path_parts = request.url.path.strip("/").split("/")
-            name = path_parts[-1]
-            bot = self.bots.get(name)
+            vocechat_bot = self._get_webhook_bot(request)
 
-            if not bot:
+            if not vocechat_bot:
                 return Response(status_code=404, content="Not Found Bot")
 
-            vocechat_bot = cast(Bot, bot)
-
-            try:
-                raw_content = request.content
-                if isinstance(raw_content, bytes):
-                    payload = json.loads(raw_content.decode("utf-8")) if raw_content else {}
-                elif isinstance(raw_content, str):
-                    payload = json.loads(raw_content) if raw_content else {}
-                else:
-                    payload = {}
-            except (UnicodeDecodeError, json.JSONDecodeError, TypeError):
+            payload = self._load_json_payload(request)
+            if payload is None:
                 return Response(status_code=400, content="Invalid JSON")
 
             event = self._parse_event(payload, vocechat_bot)
@@ -230,50 +258,64 @@ class Adapter(BaseAdapter):
             log("ERROR", "Error handling VoceChat webhook", e)
             return Response(status_code=500, content=str(e))
 
+    def _get_message_cache(self, bot: Bot) -> MessageCache:
+        bot_self_id = bot.self_id
+        if self.message_cache.get(bot_self_id) is None:
+            self.message_cache[bot_self_id] = MessageCache(
+                self.adapter_config.vocechat_history_length
+            )
+        return self.message_cache[bot_self_id]
+
+    @staticmethod
+    def _build_event_data(payload: dict[str, Any], bot: Bot) -> dict[str, Any]:
+        timestamp = payload.get("created_at", 0)
+        return {
+            "created_at": timestamp,
+            "from_uid": payload.get("from_uid", 0),
+            "mid": payload.get("mid", 0),
+            "target": payload.get("target", {}),
+            "self_uid": bot.user_id,
+            "time": (
+                datetime.fromtimestamp(timestamp / 1000)
+                if timestamp is not None
+                else datetime.now()
+            ),
+            "message_id": payload.get("mid"),
+        }
+
+    @staticmethod
+    def _build_message_event(
+        event_data: dict[str, Any],
+        is_group: bool,
+    ) -> GroupMessageEvent | PrivateMessageEvent:
+        if is_group:
+            return GroupMessageEvent.model_validate(event_data)
+        return PrivateMessageEvent.model_validate(event_data)
+
     def _parse_event(self, payload: dict[str, Any], bot: Bot) -> Event | None:
         """解析 VoceChat 事件"""
         try:
-            timestamp = payload.get("created_at", 0)
-
-            event_data = {
-                "created_at": timestamp,
-                "from_uid": payload.get("from_uid", 0),
-                "mid": payload.get("mid", 0),
-                "target": payload.get("target", {}),
-                "self_uid": bot.user_id,
-                "time": datetime.fromtimestamp(timestamp / 1000) if timestamp is not None else datetime.now(),
-                "message_id": payload.get("mid"),
-            }
-
+            event_data = self._build_event_data(payload, bot)
             detail = payload.get("detail", {})
 
             if isinstance(detail, dict):
-                event = None
-                bot_self_id = bot.self_id
-                if self.message_cache.get(bot_self_id) is None:
-                    self.message_cache[bot_self_id] = MessageCache(self.adapter_config.vocechat_history_length)
-
+                message_cache = self._get_message_cache(bot)
                 detail_type = detail.get("type")
-
                 is_group = payload.get("target", {}).get("gid") is not None
 
                 if detail_type in ("normal", "reply"):
                     event_data["detail"] = detail
-
-                    if is_group:
-                        event = GroupMessageEvent.model_validate(event_data)
-                    else:
-                        event = PrivateMessageEvent.model_validate(event_data)
+                    event = self._build_message_event(event_data, is_group)
 
                     if detail_type == "reply":
                         reply_id = detail.get("mid", 0)
-                        cached_event = self.message_cache[bot_self_id].get(reply_id)
+                        cached_event = message_cache.get(reply_id)
                         event.reply = Reply(
                             mid=reply_id,
                             message=cached_event.message if cached_event else None
                         )
 
-                    self.message_cache[bot_self_id].add(event.mid, event)
+                    message_cache.add(event.mid, event)
 
                     return event
 
