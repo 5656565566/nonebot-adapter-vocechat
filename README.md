@@ -13,12 +13,6 @@ _✨ vocechat webhook 协议适配 ✨_
 
 </div>
 
-> [!NOTE]
-> 目前处于早期阶段
-> 
-> 遇到问题可以反馈
-
-
 ## 配置
 
 修改 NoneBot 配置文件 `.env` 或者 `.env.*`。
